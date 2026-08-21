@@ -29,7 +29,7 @@ async function fetchNewRouteSheet() {
       batchPromises.push(
         db
           .from('view_routes_with_coords')
-          .select('*')
+          .select('id, origin, province, ship_to, ship_to_desc, pct_total, avg_trip_week, fwd_agent_desc, dest_lat, dest_lng, is_exact_location')
           .range(from, to)
       );
     }
