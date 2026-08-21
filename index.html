@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BevChain Logistics Network</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { fontFamily: { sans: ['Sarabun', 'sans-serif'] } } }
+    }
+  </script>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+  <!-- ApexCharts -->
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Custom CSS & PapaParse -->
+  <link rel="stylesheet" href="css/styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+
+<body class="bg-slate-50 dark:bg-zinc-950 text-slate-800 dark:text-white transition-colors duration-500 overflow-hidden font-sans selection:bg-orange-500/30">
+  
+  <!-- LOGIN SCREEN -->
+  <div id="login-screen" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-50 dark:bg-zinc-950 transition-opacity duration-500">
+    <div class="relative w-full max-w-md p-8 bg-white dark:bg-zinc-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 text-center animate-slide-up">
+      <div class="absolute -top-10 -right-10 w-32 h-32 bg-orange-500/20 rounded-full blur-3xl pointer-events-none"></div>
+      
+      <div class="flex flex-col items-center justify-center gap-4 mb-10">
+        <div class="w-16 h-16 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl flex items-center justify-center shadow-[0_0_20px_rgba(249,115,22,0.4)]">
+          <span class="text-white font-black text-4xl">B</span>
+        </div>
+        <div>
+          <h1 class="text-2xl font-black tracking-tight text-slate-800 dark:text-white">BevChain</h1>
+          <p class="text-xs text-orange-500 font-bold uppercase tracking-widest mt-1">Logistics Network</p>
+        </div>
+      </div>
+
+      <div class="space-y-6">
+        <p class="text-sm font-medium text-slate-500 dark:text-slate-400">Please sign in to access the control tower.</p>
+        <button id="btn-login-ms" class="w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-white border-2 border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 dark:bg-zinc-800 text-slate-700 dark:text-slate-200 rounded-xl font-bold text-sm shadow-sm transition-all hover:shadow-md group">
+          <svg class="w-5 h-5 group-hover:scale-110 transition-transform" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+            <path d="M10 0H0V10H10V0Z" fill="#F25022"/>
+            <path d="M21 0H11V10H21V0Z" fill="#7FBA00"/>
+            <path d="M10 11H0V21H10V11Z" fill="#00A4EF"/>
+            <path d="M21 11H11V21H21V11Z" fill="#FFB900"/>
+          </svg>
+          Sign in with Microsoft
+        </button>
+      </div>
+      <p class="mt-8 text-[10px] text-slate-400 font-medium">© 2026 BevChain Logistics. Secure Enterprise Login.</p>
+    </div>
+  </div>
+
+  <!-- MAIN APP CONTAINER -->
+  <div id="main-app" class="flex h-screen w-full relative opacity-0 pointer-events-none transition-opacity duration-500">
+    
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-64 relative z-50 border-r flex flex-col shrink-0 transition-[width] duration-300 ease-in-out bg-white dark:bg-zinc-900 border-slate-200 dark:border-slate-800">
+      <div class="h-16 flex items-center justify-between px-5 border-b shrink-0 transition-all duration-300 border-slate-200 dark:border-slate-800" id="sidebar-header">
+        <div class="flex items-center gap-3 overflow-hidden" id="sidebar-brand">
+          <div class="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(249,115,22,0.4)] shrink-0">
+            <span class="text-white font-black text-lg">B</span>
+          </div>
+          <div class="flex flex-col whitespace-nowrap">
+            <h1 class="text-sm font-bold tracking-wide" data-i18n="appTitle">BevChain</h1>
+            <p class="text-[9px] text-orange-500 font-bold uppercase tracking-wider" data-i18n="appSub">Logistics Network</p>
+          </div>
+        </div>
+        <button id="toggle-sidebar" class="p-1.5 rounded-lg transition-colors hover:bg-slate-200 text-slate-500 hover:text-slate-800 dark:hover:bg-slate-800 dark:text-slate-400 dark:hover:text-white">
+          <i data-lucide="chevron-left" class="w-4 h-4"></i>
+        </button>
+      </div>
+      
+      <div class="flex-1 py-6 px-3 space-y-2 overflow-y-auto custom-scrollbar" id="menu-container"></div>
+      
+      <!-- Sidebar User Profile & Logout -->
+      <div class="p-4 border-t border-slate-200 dark:border-slate-800">
+        <div class="flex items-center justify-between gap-2" id="sidebar-user">
+          <div class="flex items-center gap-3 overflow-hidden user-info-wrapper">
+            <div class="w-8 h-8 rounded-full bg-orange-100 dark:bg-orange-900 flex items-center justify-center shrink-0 border-2 border-orange-500 text-orange-600 dark:text-orange-400 font-bold text-sm">JL</div>
+            <div class="overflow-hidden user-details flex flex-col">
+              <p class="text-xs font-bold truncate text-slate-800 dark:text-white">Jakkrit Latthawanichphan</p>
+              <p class="text-[10px] font-medium truncate text-slate-500 dark:text-slate-400">Transport</p>
+            </div>
+          </div>
+          <button id="btn-logout" title="Log out" class="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0">
+            <i data-lucide="log-out" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 z-20 relative">
+      <header class="relative z-40 py-4 px-6 flex items-center justify-between shrink-0 transition-colors duration-500 bg-slate-50 dark:bg-zinc-950">
+        <div class="flex flex-col">
+          <h2 class="text-lg font-black tracking-tight text-slate-800 dark:text-white" id="header-title">Executive Dashboard</h2>
+          <p class="text-[10px] font-medium mt-0.5 text-slate-500 dark:text-slate-400" id="header-subtitle">Summarize route data for management's view</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="forceRefreshRouteData()" title="รีเฟรชข้อมูลสดจากฐานข้อมูล" class="p-2 rounded-full border bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-slate-300 hover:text-[#ff5e00] dark:hover:text-[#ff5e00] transition-colors cursor-pointer shadow-sm">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+          </button>
+          <!-- <button class="relative p-2 rounded-full border bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-slate-300 hover:text-[#ff5e00] transition-colors">
+            <div class="absolute top-0 right-0 w-2 h-2 bg-[#ff5e00] rounded-full border border-white dark:border-zinc-950"></div>
+            <i data-lucide="activity" class="w-4 h-4"></i>
+          </button>
+          <button class="p-2 rounded-full border bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-slate-300 hover:text-[#ff5e00] transition-colors">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+          </button>
+          <button id="toggle-lang" class="p-2 rounded-full border font-bold text-[10px] w-9 h-9 flex justify-center items-center transition-colors bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-slate-300 hover:text-[#ff5e00]">EN</button> -->
+          <button id="btn-theme-toggle" class="p-2 rounded-full border w-9 h-9 flex justify-center items-center transition-colors bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-amber-400 hover:text-[#ff5e00]">
+            <i data-lucide="moon" class="w-4 h-4" id="theme-icon"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- Main Views Container -->
+      <main class="flex-1 px-6 pb-6 overflow-hidden relative">
+        
+      <!-- View 0: Executive Dashboard (Fluid & Responsive) -->
+      <div id="view-exec" class="hidden flex-col h-[calc(100vh-130px)] overflow-y-auto custom-scrollbar animate-slide-up font-sans px-3 sm:px-6 py-2">
+        <div class="w-full max-w-[1600px] mx-auto flex flex-col gap-5 font-sans transition-all duration-300">
+          
+          <!-- Top Executive KPI Summary (Distinct Route & Carrier Route Breakdown with %) -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 font-sans">
+            
+            <!-- Left Card: Distinct Route (5 Columns) -->
+            <div class="lg:col-span-5 p-5 rounded-3xl border shadow-sm bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 flex flex-col justify-between">
+              <!-- Header -->
+              <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-2">
+                  <div class="p-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-500">
+                    <i data-lucide="git-fork" class="w-4 h-4"></i>
+                  </div>
+                  <h3 class="text-xs font-black text-slate-800 dark:text-white uppercase tracking-wider">Distinct Route</h3>
+                </div>
+                <span class="text-[10px] font-semibold text-slate-400">Unique Network Paths</span>
+              </div>
+
+              <!-- 2 Columns Grid -->
+              <div class="grid grid-cols-2 gap-4 pt-4 divide-x divide-slate-100 dark:divide-slate-800">
+                <!-- Total -->
+                <div class="pr-2 flex flex-col justify-between">
+                  <div>
+                    <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Total</p>
+                    <div class="flex items-baseline gap-1.5 mt-1">
+                      <span id="kpi-distinct-total" class="text-2xl lg:text-3xl font-black text-slate-800 dark:text-white">0</span>
+                      <span class="text-xs font-bold text-slate-400">routes</span>
+                    </div>
+                  </div>
+                  <div id="kpi-distinct-total-trips" class="mt-2 text-[10px] space-y-0.5 text-slate-500 dark:text-slate-400 font-medium">
+                    <div><strong class="text-slate-700 dark:text-slate-200">0</strong> trips/wk</div>
+                    <div class="text-[9px] text-slate-400 font-normal">(~0 /day • 6 days)</div>
+                  </div>
+                </div>
+
+                <!-- Available (มี % กำกับ) -->
+                <div class="pl-4 flex flex-col justify-between">
+                  <div>
+                    <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Available</p>
+                    <div class="flex items-baseline gap-1 mt-1 flex-wrap">
+                      <span id="kpi-distinct-avail-count" class="text-2xl lg:text-3xl font-black text-emerald-600 dark:text-emerald-400">0</span>
+                      <span id="kpi-distinct-avail-pct" class="text-xs font-black text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded-md">(0.0%)</span>
+                      <span class="text-xs font-bold text-slate-400">routes</span>
+                    </div>
+                  </div>
+                  <div id="kpi-distinct-avail-trips" class="mt-2 text-[10px] space-y-0.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <div><strong class="text-emerald-700 dark:text-emerald-300">0</strong> trips/wk</div>
+                    <div class="text-[9px] text-emerald-500 font-normal">(~0 /day • 6 days)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Card: Carrier Route Breakdown (7 Columns) -->
+            <div class="lg:col-span-7 p-5 rounded-3xl border shadow-sm bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 flex flex-col justify-between">
+              <!-- Header -->
+              <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-2">
+                  <div class="p-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/50 text-orange-500">
+                    <i data-lucide="truck" class="w-4 h-4"></i>
+                  </div>
+                  <h3 class="text-xs font-black text-slate-800 dark:text-white uppercase tracking-wider">Carrier Route Breakdown</h3>
+                </div>
+                <span class="text-[10px] font-semibold text-slate-400">Subcontractor Level Assignments</span>
+              </div>
+
+              <!-- 3 Columns Grid -->
+              <div class="grid grid-cols-3 gap-3 pt-4 divide-x divide-slate-100 dark:divide-slate-800">
+                <!-- Total -->
+                <div class="pr-2 flex flex-col justify-between">
+                  <div>
+                    <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Total</p>
+                    <div class="flex items-baseline gap-1 mt-1">
+                      <span id="kpi-carrier-total" class="text-2xl lg:text-3xl font-black text-slate-800 dark:text-white">0</span>
+                      <span class="text-xs font-bold text-slate-400 hidden sm:inline">routes</span>
+                    </div>
+                  </div>
+                  <div id="kpi-carrier-total-trips" class="mt-2 text-[10px] space-y-0.5 text-slate-500 dark:text-slate-400 font-medium">
+                    <div><strong class="text-slate-700 dark:text-slate-200">0</strong> trips/wk</div>
+                    <div class="text-[9px] text-slate-400 font-normal">(~0 /day)</div>
+                  </div>
+                </div>
+
+                <!-- Unavailable (เพิ่ม % สัดส่วนงานเต็ม) -->
+                <div class="px-3 flex flex-col justify-between">
+                  <div>
+                    <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Unavailable</p>
+                    <div class="flex items-baseline gap-1 mt-1 flex-wrap">
+                      <span id="kpi-carrier-unavail" class="text-2xl lg:text-3xl font-black text-rose-600 dark:text-rose-400">0</span>
+                      <span id="kpi-carrier-unavail-pct" class="text-xs font-black text-rose-500 bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded-md">(0.0%)</span>
+                      <span class="text-xs font-bold text-slate-400 hidden sm:inline">routes</span>
+                    </div>
+                  </div>
+                  <div id="kpi-carrier-unavail-trips" class="mt-2 text-[10px] space-y-0.5 text-rose-600 dark:text-rose-400 font-medium">
+                    <div><strong class="text-rose-700 dark:text-rose-300">0</strong> trips/wk</div>
+                    <div class="text-[9px] text-rose-500 font-normal">(~0 /day)</div>
+                  </div>
+                </div>
+
+                <!-- Available (เพิ่ม % สัดส่วนงานว่าง) -->
+                <div class="pl-3 flex flex-col justify-between">
+                  <div>
+                    <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Available</p>
+                    <div class="flex items-baseline gap-1 mt-1 flex-wrap">
+                      <span id="kpi-carrier-avail" class="text-2xl lg:text-3xl font-black text-emerald-600 dark:text-emerald-400">0</span>
+                      <span id="kpi-carrier-avail-pct" class="text-xs font-black text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded-md">(0.0%)</span>
+                      <span class="text-xs font-bold text-slate-400 hidden sm:inline">routes</span>
+                    </div>
+                  </div>
+                  <div id="kpi-carrier-avail-trips" class="mt-2 text-[10px] space-y-0.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <div><strong class="text-emerald-700 dark:text-emerald-300">0</strong> trips/wk</div>
+                    <div class="text-[9px] text-emerald-500 font-normal">(~0 /day)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- ========================================================= -->
+          <!-- 2. REGIONAL MAP & ZONE SUMMARY (Adaptive 12 Columns)      -->
+          <!-- ========================================================= -->
+          <div class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-4 font-sans">
+            
+            <!-- Header -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h3 class="text-sm font-extrabold text-slate-800 dark:text-white flex items-center gap-2 font-sans">
+                  <i data-lucide="map-pin" class="w-4 h-4 text-orange-500"></i> Available Backhaul Routes by Region
+                </h3>
+                <p class="text-[11px] font-medium text-slate-500 dark:text-slate-400 font-sans">Click on any region card to drill down into lane-level capacity</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 font-sans">
+              <!-- รายการการ์ดสรุปราย Zone (5 Columns) -->
+              <div id="exec-region-summary-list" class="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2.5 overflow-y-auto max-h-[340px] custom-scrollbar pr-1 font-sans">
+                <div class="p-4 text-center text-xs text-slate-400 col-span-full font-sans">Loading Available Backhaul data by region...</div>
+              </div>
+
+              <!-- แผนที่ Heatmap (7 Columns) -->
+              <div class="lg:col-span-7 h-[340px] rounded-2xl border border-slate-200 dark:border-slate-800 relative overflow-hidden shadow-inner font-sans">
+                <!-- Map Canvas -->
+                <div id="map-exec-heatmap" class="w-full h-full z-0"></div>
+
+                <!-- 💡 การ์ด Legend ลอยบน Map (Bottom-Left Glassmorphism Card) -->
+                <div class="absolute bottom-2.5 left-2.5 z-[400] bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md p-2.5 px-3 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xl font-sans min-w-[170px] pointer-events-auto">
+                  <!-- Legend Header -->
+                  <div class="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800">
+                    <div class="flex items-center gap-1.5">
+                      <span class="w-1.5 h-1.5 rounded-full bg-orange-500 ring-2 ring-orange-500/20"></span>
+                      <span class="text-[11px] font-black text-slate-800 dark:text-slate-100">Available Backhaul</span>
+                    </div>
+                    <span class="text-[9px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Avail %</span>
+                  </div>
+
+                  <!-- Legend Rows -->
+                  <div class="space-y-1 text-[10px]">
+                    <!-- High -->
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500 shadow-sm shrink-0"></span>
+                        <span class="text-slate-700 dark:text-slate-300 font-semibold">High</span>
+                      </div>
+                      <span class="font-black text-emerald-600 dark:text-emerald-400">71 - 100%</span>
+                    </div>
+
+                    <!-- Moderate -->
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-amber-500 shadow-sm shrink-0"></span>
+                        <span class="text-slate-700 dark:text-slate-300 font-semibold">Moderate</span>
+                      </div>
+                      <span class="font-black text-amber-500 dark:text-amber-400">31 - 70%</span>
+                    </div>
+
+                    <!-- Low -->
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-rose-500 shadow-sm shrink-0"></span>
+                        <span class="text-slate-700 dark:text-slate-300 font-semibold">Low</span>
+                      </div>
+                      <span class="font-black text-rose-500 dark:text-rose-400">1 - 30%</span>
+                    </div>
+
+                    <!-- Unavailable -->
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-[#334155] shadow-sm shrink-0"></span>
+                        <span class="text-slate-700 dark:text-slate-300 font-semibold">Unavailable</span>
+                      </div>
+                      <span class="font-black text-slate-600 dark:text-slate-400">0%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Badge แสดงสถานะมุมขวาล่าง -->
+                <div class="absolute bottom-2.5 right-2.5 px-3 py-1.5 rounded-full text-[10px] font-bold backdrop-blur-md bg-white/90 dark:bg-zinc-900/90 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 z-[400] shadow-sm flex items-center gap-1.5 font-sans">
+                  <i data-lucide="flame" class="w-3.5 h-3.5 text-orange-500"></i>
+                  <span class="font-sans">Available Backhaul Heatmap</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ตาราง Drill-down รายละเอียด Route เมื่อคลิกเลือก Zone -->
+          <div id="exec-zone-detail-panel" class="hidden p-4 rounded-3xl bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-slate-800/80 space-y-3 transition-all duration-300 font-sans">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2.5">
+              <div class="flex items-center gap-2 font-sans">
+                <i data-lucide="list-filter" class="w-4 h-4 text-orange-500"></i>
+                <h4 class="text-xs font-extrabold text-slate-800 dark:text-white font-sans">
+                  Details for Zone: <span id="exec-selected-zone-name" class="text-orange-500 font-black font-sans">-</span>
+                </h4>
+                <span id="exec-selected-zone-badge" class="px-2 py-0.5 text-[10px] font-bold rounded-md bg-orange-100 text-orange-600 dark:bg-orange-950/60 dark:text-orange-400 font-sans">0 Routes</span>
+              </div>
+              <button onclick="closeExecZoneDetailTable()" class="p-1.5 rounded-xl hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-slate-600 transition-colors">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <div class="overflow-x-auto custom-scrollbar max-h-[320px] font-sans">
+              <table class="w-full text-left border-collapse text-[11px] font-sans">
+                <thead class="sticky top-0 bg-white dark:bg-zinc-900 shadow-sm text-slate-400 font-bold font-sans">
+                  <tr class="border-b border-slate-200 dark:border-slate-800 text-[10px] uppercase font-sans">
+                    <th class="p-2.5 font-sans">Origin</th>
+                    <th class="p-2.5 font-sans">Destination (Customer / Ship-To)</th>
+                    <th class="p-2.5 font-sans">Destination Province</th>
+                    <th class="p-2.5 font-sans">Product Type</th>
+                    <th class="p-2.5 font-sans">Truck Type</th>
+                    <th class="p-2.5 font-sans">Carrier (FwdAgent)</th>
+                    <th class="p-2.5 text-center font-sans">Avg Trip/Wk</th>
+                    <th class="p-2.5 text-right font-sans">Available Backhaul</th>
+                  </tr>
+                </thead>
+                <tbody id="exec-zone-table-body" class="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300 font-sans"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ========================================================= -->
+          <!-- 3. LOWER SECTION: TRUCK TYPE, CARRIER    -->
+          <!-- ========================================================= -->
+              
+              <!-- 3.1 Available by Truck Type (Modern Fleet Grid Cards) -->
+              <div class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-3 font-sans">
+                <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                  <div class="flex items-center gap-2 font-sans">
+                    <div class="p-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/50 text-orange-500">
+                      <i data-lucide="truck" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                      <h4 class="text-xs font-extrabold text-slate-800 dark:text-white font-sans">Available by Truck Type</h4>
+                    </div>
+                  </div>
+                  <span class="text-[10px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/50 px-2.5 py-1 rounded-full font-sans">Fleet Capacity</span>
+                </div>
+                
+                <!-- Grid List Container -->
+                <div id="exec-truck-avail-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1 max-h-[360px] overflow-y-auto custom-scrollbar pr-1 font-sans">
+                  <div class="text-[10px] text-slate-400 text-center py-6 col-span-full font-sans">Analyzing truck types...</div>
+                </div>
+              </div>
+
+              <!-- 3.2 Carrier Availability (Grid View with Live Search) -->
+              <div class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-3 font-sans">
+                
+                <!-- Header & Live Search Bar -->
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3">
+                  <div class="flex items-center gap-2">
+                    <div class="p-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-500">
+                      <i data-lucide="truck" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                      <h4 class="text-xs font-black text-slate-800 dark:text-white uppercase tracking-wider font-sans">Carrier Availability</h4>
+                      <p class="text-[10px] text-slate-400 font-sans">Capacity & workload by subcontracted fleet</p>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2">
+                    <!-- Search Input -->
+                    <div class="relative w-full sm:w-44">
+                      <i data-lucide="search" class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
+                      <input type="text" 
+                            id="input-search-carrier" 
+                            placeholder="Search carrier..." 
+                            oninput="filterCarrierCardList(this.value)"
+                            class="w-full pl-8 pr-2.5 py-1 text-[11px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-zinc-950 text-slate-800 dark:text-slate-200 outline-none focus:border-emerald-500 transition-colors font-sans">
+                    </div>
+                    <span id="exec-avail-cap-count" class="px-2.5 py-1 rounded-xl text-[10px] font-black bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400 whitespace-nowrap font-sans">0 Carriers</span>
+                  </div>
+                </div>
+
+                <!-- Cards Grid Container -->
+                <div id="exec-avail-cap-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[320px] overflow-y-auto custom-scrollbar pr-1 font-sans">
+                  <div class="text-[11px] text-slate-400 text-center py-8 col-span-full font-sans">Analyzing carrier capacity...</div>
+                </div>
+
+              </div>
+          
+
+        </div>
+      </div>
+        
+        <!-- View 1: Route Dashboard -->
+        <div id="view-dashboard" class="hidden flex-col h-full relative overflow-hidden animate-slide-up rounded-2xl border shadow-lg border-slate-200 dark:border-slate-800/50">
+          <div class="absolute inset-0 z-0" id="map-dashboard"></div>
+
+          <!-- Map Filters Panel -->
+          <div class="absolute top-4 left-4 z-[400] flex gap-4 pointer-events-none" id="map-filters-container">
+            <div id="map-filters-panel" class="pointer-events-auto w-[340px] max-h-[calc(100vh-140px)] flex flex-col rounded-xl border shadow-2xl backdrop-blur-xl transition-all duration-300 bg-white/95 border-slate-200 dark:bg-zinc-900/95 dark:border-slate-700">
+              
+              <!-- Panel Header -->
+              <div id="toggle-filters-main" class="p-4 border-b flex justify-between items-center cursor-pointer shrink-0 border-slate-200 dark:border-slate-700">
+                <h4 class="text-xs uppercase font-bold tracking-wide flex items-center gap-2 text-slate-800 dark:text-white">
+                  <i data-lucide="layers" class="w-3.5 h-3.5 text-orange-500"></i> MAP FILTERS
+                </h4>
+                
+                <div class="flex items-center gap-2">
+                  <button id="btn-reset-filters" 
+                          type="button" 
+                          onclick="event.stopPropagation(); resetMapFilters();" 
+                          class="text-[10px] font-bold text-slate-400 hover:text-orange-500 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition-all">
+                    <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
+                    <span>Clear</span>
+                  </button>
+                  <i data-lucide="chevron-up" id="filters-main-chevron" class="w-3.5 h-3.5 text-slate-500 dark:text-slate-400"></i>
+                </div>
+              </div>
+              
+              <!-- Filter Content Area -->
+              <div id="filters-content" class="p-4 overflow-y-auto custom-scrollbar flex-1 relative animate-slide-up pr-2">
+                
+                <!-- Search Box -->
+                <div class="relative mb-4">
+                  <i data-lucide="search" class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"></i>
+                  <input type="text" placeholder="Search ID, Origin, Destination, Customer, Carrier..." class="w-full pl-8 pr-3 py-2 rounded-full text-[11px] border outline-none transition-colors shadow-inner bg-slate-50 border-slate-300 text-slate-800 focus:border-orange-500 dark:bg-zinc-950 dark:border-slate-700 dark:text-white">
+                </div>
+
+                <!-- Heat Map Section (Collapsed) -->
+                <div class="mb-3">
+                  <div class="filter-accordion-toggle flex justify-between items-center py-2 cursor-pointer select-none" data-target="filter-heatmap">
+                    <div class="flex items-center gap-2">
+                      <i data-lucide="flame" class="w-4 h-4 text-orange-500"></i>
+                      <span class="text-xs font-extrabold text-orange-600 dark:text-orange-400">Heat Map</span>
+                    </div>
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-500 accordion-chevron"></i>
+                  </div>
+                  
+                  <div id="filter-heatmap" class="filter-accordion-content hidden p-3.5 rounded-2xl border border-orange-200/80 bg-orange-50/40 dark:bg-orange-950/20 dark:border-orange-900/40 space-y-3.5 mt-1">
+                    <div>
+                      <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">DISPLAY MODE</label>
+                      <div class="p-1 rounded-xl bg-slate-200/70 dark:bg-zinc-800 flex gap-1" id="display-mode-segmented">
+                        <button type="button" data-mode="routes" class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-[#f97316] text-white shadow-sm">
+                          <i data-lucide="git-commit" class="w-3.5 h-3.5"></i> Routes
+                        </button>
+                        <button type="button" data-mode="heatmap" class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-zinc-700/50">
+                          <i data-lucide="flame" class="w-3.5 h-3.5 text-orange-500"></i> Heat Map
+                        </button>
+                        <button type="button" data-mode="hybrid" class="mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-zinc-700/50">
+                          <i data-lucide="layers" class="w-3.5 h-3.5 text-purple-500"></i> Hybrid
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">HEATMAP</label>
+                      <select id="filter-heat-metric" onchange="applyDynamicFilters(); if(typeof applyHeatmapFilter==='function') applyHeatmapFilter();" class="w-full p-2.5 rounded-xl text-xs font-bold border border-slate-200 bg-white text-slate-800 outline-none dark:bg-zinc-950 dark:border-slate-700 dark:text-white shadow-sm cursor-pointer hover:border-orange-500 transition-colors font-sans">
+                        <option value="all">🌐 All Routes</option>
+                        <option value="quota" selected>🟢 Available Backhaul</option>
+                        <option value="density">🔥Trip Density</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Fleet Filter Section (Collapsed) -->
+                <div class="mb-3">
+                  <div class="filter-accordion-toggle flex justify-between items-center py-1.5 cursor-pointer select-none" data-target="filter-ops">
+                    <div class="flex items-center gap-2">
+                      <i data-lucide="sliders" class="w-3.5 h-3.5 text-blue-500"></i>
+                      <span class="text-[11px] font-bold text-slate-800 dark:text-white">Fleet</span>
+                    </div>
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-500 accordion-chevron"></i>
+                  </div>
+                  
+                  <div id="filter-ops" class="filter-accordion-content hidden p-3 rounded-xl border border-dashed mt-1 space-y-3 bg-slate-50/50 border-slate-300 dark:bg-slate-800/20 dark:border-slate-700">
+                    <!-- Carrier (Custom Dropdown) -->
+                    <div class="flex flex-col custom-select-container relative">
+                      <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Carrier (Subcontractor)</label>
+                      <button type="button" onclick="toggleCustomDropdown('dropdown-filter-carrier')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                        <span id="label-filter-carrier" data-default="All Carriers" class="truncate text-slate-500 dark:text-slate-400">All Carriers</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                      </button>
+                      <div id="dropdown-filter-carrier" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                    </div>
+
+                    <!-- Truck Type (Custom Dropdown) -->
+                    <div class="flex flex-col custom-select-container relative">
+                      <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1 block">Truck Type</label>
+                      <button type="button" onclick="toggleCustomDropdown('dropdown-filter-truck-type')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                        <span id="label-filter-truck-type" data-default="All Truck Types" class="truncate text-slate-500 dark:text-slate-400">All Truck Types</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                      </button>
+                      <div id="dropdown-filter-truck-type" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                    </div>
+
+                    <!-- Available Backhaul Range (%) Filter -->
+                    <div>
+                      <div class="flex justify-between items-center mb-1">
+                        <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Available Backhaul (%)</label>
+                        <span class="text-[9px] text-slate-400">Min - Max %</span>
+                      </div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <input type="number" id="filter-backhaul-min" min="0" max="100" placeholder="Min % (0)" class="w-full p-2 rounded-xl text-xs border bg-white border-slate-200 text-slate-800 dark:bg-zinc-950 dark:border-slate-700 dark:text-white outline-none focus:border-orange-500 transition-colors">
+                        <input type="number" id="filter-backhaul-max" min="0" max="100" placeholder="Max % (100)" class="w-full p-2 rounded-xl text-xs border bg-white border-slate-200 text-slate-800 dark:bg-zinc-950 dark:border-slate-700 dark:text-white outline-none focus:border-orange-500 transition-colors">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Origin Section (Collapsed) -->
+                <div class="mb-2">
+                  <div class="filter-accordion-toggle flex justify-between items-center py-2 cursor-pointer select-none" data-target="filter-origin">
+                    <div class="flex items-center gap-2">
+                      <i data-lucide="map-pin" class="w-3.5 h-3.5 text-emerald-500"></i>
+                      <span class="text-[11px] font-bold text-slate-800 dark:text-white">Origin</span>
+                    </div>
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 accordion-chevron"></i>
+                  </div>
+                  <div id="filter-origin" class="filter-accordion-content hidden p-3 rounded-xl border border-dashed mt-1 space-y-3 bg-slate-50/50 border-slate-300 dark:bg-slate-800/20 dark:border-slate-700">
+                    <div class="flex flex-col custom-select-container relative">
+                      <button type="button" onclick="toggleCustomDropdown('dropdown-filter-origin-province')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                        <span id="label-filter-origin-province" data-default="All Origin DCs" class="truncate text-slate-500 dark:text-slate-400">All Origin DCs</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                      </button>
+                      <div id="dropdown-filter-origin-province" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Destination & Customer Section (Collapsed) -->
+                <div class="mb-2">
+                  <div class="filter-accordion-toggle flex justify-between items-center py-2 cursor-pointer select-none" data-target="filter-dest">
+                    <div class="flex items-center gap-2">
+                      <i data-lucide="navigation" class="w-3.5 h-3.5 text-pink-500 -rotate-45"></i>
+                      <span class="text-[11px] font-bold text-slate-800 dark:text-white">Destination & Customer</span>
+                    </div>
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 accordion-chevron"></i>
+                  </div>
+                  <div id="filter-dest" class="filter-accordion-content hidden p-3 rounded-xl border border-dashed mt-1 space-y-3 bg-slate-50/50 border-slate-300 dark:bg-slate-800/20 dark:border-slate-700">
+                    <div class="grid grid-cols-2 gap-2">
+                      <div class="flex flex-col custom-select-container relative">
+                        <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Destination Zone</label>
+                        <button type="button" onclick="toggleCustomDropdown('dropdown-filter-dest-region')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                          <span id="label-filter-dest-region" data-default="All Zones" class="truncate text-slate-500 dark:text-slate-400">All Zones</span>
+                          <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                        </button>
+                        <div id="dropdown-filter-dest-region" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                      </div>
+                      
+                      <div class="flex flex-col custom-select-container relative">
+                        <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Destination Province</label>
+                        <button type="button" onclick="toggleCustomDropdown('dropdown-filter-dest-province')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                          <span id="label-filter-dest-province" data-default="All Provinces" class="truncate text-slate-500 dark:text-slate-400">All Provinces</span>
+                          <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                        </button>
+                        <div id="dropdown-filter-dest-province" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                      </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                      <div class="flex flex-col custom-select-container relative">
+                        <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Customer Type</label>
+                        <button type="button" onclick="toggleCustomDropdown('dropdown-filter-customer-type')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                          <span id="label-filter-customer-type" data-default="All Types" class="truncate text-slate-500 dark:text-slate-400">All Types</span>
+                          <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                        </button>
+                        <div id="dropdown-filter-customer-type" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                      </div>
+                      
+                      <div class="flex flex-col custom-select-container relative">
+                        <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Customer Name</label>
+                        <button type="button" onclick="toggleCustomDropdown('dropdown-filter-customer-name')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                          <span id="label-filter-customer-name" data-default="All Customers" class="truncate text-slate-500 dark:text-slate-400">All Customers</span>
+                          <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                        </button>
+                        <div id="dropdown-filter-customer-name" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-col custom-select-container relative">
+                      <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Ship-To Location</label>
+                      <button type="button" onclick="toggleCustomDropdown('dropdown-filter-shipto-desc')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                        <span id="label-filter-shipto-desc" data-default="All Locations" class="truncate text-slate-500 dark:text-slate-400">All Locations</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                      </button>
+                      <div id="dropdown-filter-shipto-desc" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Product Section (Collapsed) -->
+                <div class="mb-2">
+                  <div class="filter-accordion-toggle flex justify-between items-center py-2 cursor-pointer select-none" data-target="filter-product">
+                    <div class="flex items-center gap-2">
+                      <i data-lucide="box" class="w-3.5 h-3.5 text-blue-500"></i>
+                      <span class="text-[11px] font-bold text-slate-800 dark:text-white">Product Type</span>
+                    </div>
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 accordion-chevron"></i>
+                  </div>
+                  <div id="filter-product" class="filter-accordion-content hidden p-3 rounded-xl border border-dashed mt-1 space-y-3 bg-slate-50/50 border-slate-300 dark:bg-slate-800/20 dark:border-slate-700">
+                    <div class="flex flex-col custom-select-container relative">
+                      <button type="button" onclick="toggleCustomDropdown('dropdown-filter-product-cat')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                        <span id="label-filter-product-cat" data-default="All Categories" class="truncate text-slate-500 dark:text-slate-400">All Categories</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                      </button>
+                      <div id="dropdown-filter-product-cat" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Export Button -->
+                <div class="pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                  <button onclick="exportFilteredDataToCSV()" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/20 hover:shadow-emerald-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]">
+                    <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                    <span>Export Data to Excel (CSV)</span>
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Right Map Controls Container (Legend & Zoom) -->
+          <div class="absolute top-4 right-4 z-[400] flex flex-col items-end gap-2 pointer-events-none">
+           <!-- Route Color Legend Box -->
+            <div class="pointer-events-auto p-2.5 rounded-2xl border shadow-xl backdrop-blur-xl bg-white/95 border-slate-200 dark:bg-zinc-900/95 dark:border-slate-700 w-52 text-[11px] space-y-2 transition-all font-sans">
+              <div class="font-bold text-slate-800 dark:text-white flex items-center justify-between border-b pb-1.5 border-slate-100 dark:border-slate-800">
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="git-commit" class="w-3.5 h-3.5 text-orange-500"></i>
+                  <span>Available Backhaul</span>
+                </span>
+                <span class="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Avail %</span>
+              </div>
+
+              <div class="space-y-1.5 text-[10px] font-medium font-sans">
+                <!-- Green: 71 - 100% -->
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#10b981] shrink-0 shadow-sm shadow-emerald-500/30"></span>
+                    <span class="text-slate-700 dark:text-slate-300">High</span>
+                  </div>
+                  <span class="font-bold text-emerald-600 dark:text-emerald-400">71 - 100%</span>
+                </div>
+
+                <!-- Amber/Orange: 31 - 70% -->
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shrink-0 shadow-sm shadow-amber-500/30"></span>
+                    <span class="text-slate-700 dark:text-slate-300">Moderate</span>
+                  </div>
+                  <span class="font-bold text-amber-600 dark:text-amber-400">31 - 70%</span>
+                </div>
+
+                <!-- Red: 1 - 30% -->
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#ef4444] shrink-0 shadow-sm shadow-rose-500/30"></span>
+                    <span class="text-slate-700 dark:text-slate-300">Low</span>
+                  </div>
+                  <span class="font-bold text-rose-600 dark:text-rose-400">1 - 30%</span>
+                </div>
+
+                <!-- Slate / Navy: 0% -->
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#334155] shrink-0 shadow-sm shadow-slate-500/30"></span>
+                    <span class="text-slate-700 dark:text-slate-300">Unavailable</span>
+                  </div>
+                  <span class="font-bold text-slate-600 dark:text-slate-400">0%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Map Zoom Controls -->
+            <div class="pointer-events-auto flex flex-col gap-1 w-8 shadow-xl">
+              <button onclick="dashMap.zoomIn()" class="border p-1.5 rounded-t-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700">
+                <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
+              </button>
+              <button onclick="dashMap.zoomOut()" class="border-x border-y-0 p-1.5 transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700">
+                <i data-lucide="minimize" class="w-3.5 h-3.5"></i>
+              </button>
+              <button onclick="dashMap.setView([13.75, 100.5], 6)" class="border p-1.5 rounded-b-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700">
+                <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Data Table (Bottom) -->
+          <div id="table-container" class="absolute bottom-0 left-0 w-full z-20 flex flex-col table-expanded">
+            <div class="flex justify-center -mb-px">
+              <button id="toggle-table" class="px-6 py-1.5 rounded-t-xl border-t border-x backdrop-blur-xl flex items-center gap-2 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.3)] bg-white/95 border-slate-300 text-slate-600 hover:text-slate-900 dark:bg-zinc-900/95 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">
+                <span class="text-[10px] font-bold uppercase">DATA (<span id="ops-count">0</span>)</span>
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5" id="table-chevron"></i>
+              </button>
+            </div>
+            <div class="h-64 border-t backdrop-blur-xl shadow-2xl flex flex-col bg-white/95 border-slate-300 dark:bg-zinc-900/95 dark:border-slate-700">
+              <div class="flex-1 overflow-auto custom-scrollbar p-0">
+                <table class="w-full text-left border-collapse min-w-max">
+                  <thead class="sticky top-0 z-20 backdrop-blur-md shadow-sm bg-white/95 dark:bg-zinc-900/95">
+                    <tr class="text-[10px] uppercase tracking-wider border-b text-slate-500 border-slate-200 dark:text-slate-400 dark:border-slate-700" id="table-head"></tr>
+                  </thead>
+                  <tbody id="table-body"></tbody>
+                </table>
+                <div id="table-pagination" class="bg-white dark:bg-zinc-900 rounded-b-2xl"></div>
+              </div>
+            </div>
+          </div>
+          
+        </div>
+
+        <!-- View 2: New Order Mapping Simulation -->
+        <!-- <div id="view-mapping" class="hidden flex-col lg:flex-row h-[calc(100vh-130px)] gap-4 animate-slide-up"> -->
+        <div id="view-mapping" class="hidden" style="display: none !important;">
+          
+          <!-- Left Sidebar Input & Control Panel -->
+          <div class="w-full lg:w-[440px] p-5 lg:p-6 rounded-3xl border shadow-xl flex flex-col shrink-0 overflow-y-auto custom-scrollbar bg-white/95 dark:bg-zinc-900/95 border-slate-200/80 dark:border-slate-800 backdrop-blur-md transition-all">
+
+            <!-- HEADER -->
+            <div class="flex items-center gap-3.5 mb-5 pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div class="bg-gradient-to-tr from-orange-600 to-orange-400 text-white p-2.5 rounded-2xl shadow-lg shadow-orange-500/30 shrink-0">
+                <i data-lucide="navigation" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="text-base font-extrabold text-slate-800 dark:text-white tracking-tight">New Order Mapping</h3>
+                <p class="text-[11px] font-medium text-slate-500 dark:text-slate-400">จำลองเส้นทาง จับคู่ Subcontractors & Backhaul</p>
+              </div>
+            </div>
+
+            <!-- PAGE 1: INPUT FORM STATE -->
+            <div id="sim-input-state" class="space-y-4 flex-1 flex flex-col justify-between animate-slide-up">
+              <div class="space-y-3.5">
+                <!-- Customer Info Section -->
+                <div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 dark:bg-zinc-950 dark:border-slate-800/80 space-y-2.5 shadow-sm">
+                  <div class="flex items-center gap-1.5 text-[11px] font-extrabold text-orange-600 dark:text-orange-400 uppercase tracking-wider">
+                    <i data-lucide="user-plus" class="w-3.5 h-3.5"></i> Customer Info (ลูกค้าใหม่)
+                  </div>
+                  
+                  <div>
+                    <label class="text-[11px] font-bold mb-1 block text-slate-600 dark:text-slate-400">Customer Name (ชื่อลูกค้า)</label>
+                    <input id="input-customer-name" type="text" placeholder="กรอกชื่อลูกค้าใหม่..." 
+                      class="w-full p-2.5 rounded-xl text-xs font-medium border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-800 dark:text-white outline-none focus:border-orange-500 transition-all"/>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="text-[10px] font-bold mb-1 block text-slate-500 dark:text-slate-400">Latitude (พิกัดปลายทาง)</label>
+                      <input id="input-lat" type="text" placeholder="13.7563" class="w-full p-2 rounded-lg text-xs font-Sarabun border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-800 dark:text-white outline-none focus:border-orange-500"/>
+                    </div>
+                    <div>
+                      <label class="text-[10px] font-bold mb-1 block text-slate-500 dark:text-slate-400">Longitude (พิกัดปลายทาง)</label>
+                      <input id="input-lng" type="text" placeholder="100.5018" class="w-full p-2 rounded-lg text-xs font-Sarabun border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-800 dark:text-white outline-none focus:border-orange-500"/>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Dynamic Dropdowns Section -->
+                <div class="space-y-3">
+                  <div>
+                    <label class="text-[11px] font-bold mb-1 block text-slate-600 dark:text-slate-400">ต้นทาง (DC / คลังที่รับของ)</label>
+                    <div class="relative">
+                      <select id="select-origin" class="w-full p-2.5 rounded-xl text-xs font-bold outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white focus:border-orange-500">
+                        <option value="ทั้งหมด">กำลังโหลดข้อมูล...</option>
+                      </select>
+                      <i data-lucide="chevron-down" class="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"></i>
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="text-[11px] font-bold mb-1 block text-slate-600 dark:text-slate-400">จังหวัดปลายทาง (สถานที่ส่ง)</label>
+                      <div class="relative">
+                        <select id="select-dest-province" class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white">
+                          <option value="ทั้งหมด">ทั้งหมด</option>
+                        </select>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"></i>
+                      </div>
+                    </div>
+                    <div>
+                      <label class="text-[11px] font-bold mb-1 block text-slate-600 dark:text-slate-400">โซนปลายทาง (Zone)</label>
+                      <div class="relative">
+                        <select id="select-zone" class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white">
+                          <option value="ทั้งหมด">ทั้งหมด</option>
+                        </select>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"></i>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="text-[11px] font-bold mb-1 block text-slate-600 dark:text-slate-400">ประเภทสินค้า</label>
+                      <div class="relative">
+                        <select id="select-product-category" class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white">
+                          <option value="ทั้งหมด">ทั้งหมด</option>
+                        </select>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"></i>
+                      </div>
+                    </div>
+                    <div>
+                      <label class="text-[11px] font-bold mb-1 block text-slate-600 dark:text-slate-400">ประเภทรถ</label>
+                      <div class="relative">
+                        <select id="select-truck-type" class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white">
+                          <option value="ทั้งหมด">ทั้งหมด</option>
+                        </select>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"></i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Analyze Button -->
+              <div class="pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0">
+                <button id="btn-analyze" onclick="analyzeNewOrderMapping()" 
+                  class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#ff5e00] to-[#e65500] text-white font-bold text-xs shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40 hover:scale-[1.01] active:scale-[0.99] transition-all flex justify-center items-center gap-2">
+                  <i data-lucide="cpu" class="w-4 h-4"></i> 
+                  <span>วิเคราะห์ & ดึงผู้รับเหมาแนะนำ (New_Route)</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- PAGE 2: RESULTS STATE -->
+            <div id="sim-results-state" class="hidden space-y-4 flex-1 flex-col animate-slide-up">
+              <div class="space-y-2.5 shrink-0">
+                <button onclick="backToSimInput()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-xs font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors">
+                  <i data-lucide="arrow-left" class="w-4 h-4"></i> ย้อนกลับไปแก้ไขเงื่อนไข
+                </button>
+
+                <div class="p-3 rounded-2xl bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-slate-800 text-xs space-y-1.5 shadow-sm">
+                  <div class="flex justify-between items-center border-b border-slate-200/60 dark:border-slate-800 pb-1.5">
+                    <span class="text-slate-500 text-[10px] font-bold uppercase">เส้นทางวิเคราะห์:</span>
+                    <span class="font-extrabold text-slate-800 dark:text-white flex items-center gap-1 text-[11px]" id="summary-route-label">
+                      - <i data-lucide="arrow-right" class="w-3 h-3 text-orange-500 inline"></i> -
+                    </span>
+                  </div>
+                  <div class="flex justify-between items-center text-[10px]">
+                    <span class="text-slate-500">ลูกค้า: <strong id="summary-customer-name" class="text-slate-800 dark:text-slate-200">-</strong></span>
+                    <span id="match-count-badge" class="px-2 py-0.5 rounded-full font-bold bg-orange-100 text-orange-600 dark:bg-orange-950/60 dark:text-orange-400">
+                      พบ 0 รายการ
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Top Ranked Subcons -->
+              <div class="flex-1 flex flex-col space-y-2 min-h-0">
+                <h4 class="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1.5 shrink-0">
+                  <i data-lucide="award" class="w-4 h-4 text-orange-500"></i>
+                  ผลการจัดอันดับผู้รับเหมาแนะนำ
+                </h4>
+                <div id="subcon-rank-list" class="space-y-2.5 overflow-y-auto custom-scrollbar pr-1 flex-1"></div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Map Panel -->
+          <div class="flex-1 rounded-3xl border shadow-sm relative overflow-hidden bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 min-h-[400px]">
+            <div class="absolute inset-0 z-0" id="map-simulation"></div>
+            
+            <!-- Map Controls -->
+            <div class="absolute top-4 right-4 z-[400] flex flex-col gap-1 w-8 shadow-xl">
+              <button onclick="simMap.zoomIn()" class="border p-1.5 rounded-t-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700">
+                <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
+              </button>
+              <button onclick="simMap.zoomOut()" class="border-x border-y-0 p-1.5 transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700">
+                <i data-lucide="minimize" class="w-3.5 h-3.5"></i>
+              </button>
+              <button onclick="fitSimBounds()" class="border p-1.5 rounded-b-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700">
+                <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+
+            <!-- Map Legend -->
+            <div class="absolute bottom-6 right-6 px-4 py-2.5 rounded-full text-[11px] font-bold shadow-md border z-[400] flex items-center gap-4 bg-white/90 backdrop-blur-sm border-slate-200 text-slate-600 dark:bg-zinc-900/90 dark:border-slate-700 dark:text-slate-300">
+              <span class="flex items-center gap-1.5"><div class="w-4 h-1 bg-[#f97316] rounded-full"></div> Main Route</span>
+              <span class="flex items-center gap-1.5"><div class="w-4 h-1 border-t-[3px] border-dashed border-[#3b82f6]"></div> Deadhead</span>
+              <span class="flex items-center gap-1.5"><div class="w-4 h-1 border-t-[3px] border-dashed border-[#10b981]"></div> Backhaul</span>
+            </div>
+          </div>
+
+        </div>
+      </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="hidden fixed top-20 right-6 z-[2000] flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl animate-slide-up border bg-white border-slate-200 text-slate-800 dark:bg-zinc-900 dark:border-slate-700 dark:text-white">
+      <i data-lucide="check-circle-2" class="w-4.5 h-4.5 text-emerald-500"></i>
+      <p id="toast-msg" class="text-xs font-bold"></p>
+    </div>
+
+  </div>
+
+  <!-- MODAL LEVEL 3: SHIPMENT TABLE -->
+  <div id="modal-shipment" class="hidden fixed inset-0 z-[3500] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-slide-up">
+    <div class="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-6xl max-h-[80vh] flex flex-col overflow-hidden">
+      <div class="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-zinc-950">
+        <div>
+          <h3 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+            <i data-lucide="package" class="w-4 h-4 text-blue-500"></i> Shipment Details
+          </h3>
+          <p class="text-[10px] text-slate-500" id="modal-shipment-subtitle">Load ID</p>
+        </div>
+        <button onclick="closeShipmentModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="flex-1 overflow-auto custom-scrollbar p-4">
+        <table class="w-full text-left border-collapse min-w-max text-xs">
+          <thead class="sticky top-0 z-10 bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-slate-300 font-bold uppercase text-[10px]">
+            <tr id="shipment-table-head"></tr>
+          </thead>
+          <tbody id="shipment-table-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts Loading Sequence -->
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
