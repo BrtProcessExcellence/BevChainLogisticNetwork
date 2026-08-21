@@ -135,25 +135,37 @@ async function fetchExecutiveSummaryKPI() {
   }
 }
 
-// 6. ฟังก์ชันหลักสำหรับโหลดข้อมูลทั้งหมดพร้อมกันตอนเปิดเว็บ (Master Initializer)
-async function initAllAppData() {
+async function initExecutiveDashboardFast() {
   try {
-    // โหลด Master Data และ View สรุปพร้อมกัน
-    const [origins, provinces, provSummary, routes] = await Promise.all([
+    const [origins, provinces, provSummary, kpi] = await Promise.all([
       fetchOriginLocations(),
       fetchProvinceLocations(),
       fetchExecProvinceSummary(),
-      fetchNewRouteSheet()
+      fetchExecutiveSummaryKPI()
     ]);
 
-    return {
-      origins,
-      provinces,
-      provSummary,
-      routes
-    };
+    // เรนเดอร์หน้า Executive ทันที
+    if (typeof renderExecRouteHeatmap === 'function' && provSummary) {
+      renderExecRouteHeatmap(provSummary);
+    }
+    if (typeof updateExecutiveKPICards === 'function' && kpi) {
+      updateExecutiveKPICards(kpi);
+    }
+
+    // 💡 2. สั่งโหลดข้อมูล 14,000 แถวไว้เบื้องหลัง (ไม่บล็อกหน้าจอ)
+    setTimeout(() => {
+      loadDetailedRoutesInBackground();
+    }, 100);
+
   } catch (err) {
-    console.error('Failed to initialize app data:', err);
-    return null;
+    console.error('Failed fast init:', err);
   }
+}
+
+// ฟังก์ชันโหลดตารางใหญ่ใน Background
+async function loadDetailedRoutesInBackground() {
+  if (globalRouteSheetData && globalRouteSheetData.length > 0) return;
+  console.log('🔄 Background: Loading full route data...');
+  await fetchNewRouteSheet();
+  console.log('✅ Background: Full route data ready for Operation Tab');
 }

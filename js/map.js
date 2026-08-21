@@ -1,3 +1,9 @@
+/**
+ * ==============================================================================
+ * MAP CONTROLLER & VISUALIZATION ENGINE (REFACTORED & SYNCHRONIZED)
+ * ==============================================================================
+ */
+
 // 1. Global Map Instances & Layer Groups
 let dashMap = null, simMap = null, execMap = null;
 let dashLayerGrp = null, simLayerGrp = null;
@@ -257,26 +263,75 @@ function getCurvePoints(lat1, lng1, lat2, lng2, offset = 0) {
 }
 
 // ==============================================================================
-// 4. EXECUTIVE DASHBOARD CHOROPLETH
+// 4. EXECUTIVE DASHBOARD CHOROPLETH (OPTIMIZED GEOJSON LOADER)
 // ==============================================================================
+let cachedThailandGeoJSON = null;
+let geoJsonLoadingPromise = null;
+
 async function loadThailandGeoJSON() {
+  // 1. ตรวจสอบ Memory RAM ในเซสชันปัจจุบัน
   if (cachedThailandGeoJSON) return cachedThailandGeoJSON;
-  const cdnUrls = [
-    'https://cdn.jsdelivr.net/gh/apisit/thailand.json@master/thailand.json',
-    'https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json'
-  ];
-  for (const url of cdnUrls) {
+
+  // 2. ถ้ากำลังมี Request ที่โหลดอยู่ ให้รอ Promise เดิม (ไม่ยิงซ้ำ)
+  if (geoJsonLoadingPromise) return geoJsonLoadingPromise;
+
+  geoJsonLoadingPromise = (async () => {
+    const CACHE_KEY = 'geo_thailand_provinces_v1';
+
+    // 3. ตรวจสอบ LocalStorage ของเบราว์เซอร์
     try {
-      const response = await fetch(url);
-      if (response.ok) {
-        cachedThailandGeoJSON = await response.json();
+      const stored = localStorage.getItem(CACHE_KEY);
+      if (stored) {
+        cachedThailandGeoJSON = JSON.parse(stored);
         return cachedThailandGeoJSON;
       }
     } catch (e) {
-      console.warn(`GeoJSON mirror fallback: ${url}`);
+      console.warn('LocalStorage read failed, fallback to network fetch');
     }
+
+    // 4. รายการแหล่งข้อมูล (ดึงจากโปรเจกต์ตัวเองก่อน -> CDN ที่เร็วที่สุด)
+    const sources = [
+      './data/thailand.json', // 💡 แนะนำ: วางไฟล์ไว้ในโปรเจกต์ตัวเอง (เร็วและเสถียรที่สุด)
+      './thailand.json',
+      'https://cdn.jsdelivr.net/gh/apisit/thailand.json@master/thailand.json',
+      'https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json'
+    ];
+
+    for (const url of sources) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500); // ตัด Timeout ถ้าเกิน 3.5 วิ
+
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const data = await response.json();
+          cachedThailandGeoJSON = data;
+
+          // บันทึกลง LocalStorage ไว้ใช้ครั้งถัดไป
+          try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+          } catch (storageErr) {
+            console.warn('Storage quota full, keeping GeoJSON in memory only');
+          }
+
+          return data;
+        }
+      } catch (e) {
+        console.warn(`GeoJSON source skipped (${url}):`, e.message || e);
+      }
+    }
+
+    throw new Error("Unable to load Thailand GeoJSON from any source.");
+  })();
+
+  try {
+    const result = await geoJsonLoadingPromise;
+    return result;
+  } finally {
+    geoJsonLoadingPromise = null; // เคลียร์ Promise เมื่อเสร็จสิ้น
   }
-  throw new Error("Unable to load Thailand GeoJSON.");
 }
 
 function getExecChoroplethColor(availPct) {
