@@ -156,3 +156,16 @@ async function fetchDistinctRoutes() {
   }
   return data;
 }
+async function fetchExecProvinceSummary() {
+  try {
+    const { data, error } = await db
+      .from('view_exec_province_summary')
+      .select('*');
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Error fetching province summary:', err);
+    return [];
+  }
+}

@@ -302,40 +302,71 @@ function getThaiProvinceName(enName) {
   return matchedKey ? PROVINCE_NAME_MAP[matchedKey] : enName;
 }
 
-async function renderExecRouteHeatmap(routeData) {
+async function renderExecRouteHeatmap(data) {
   if (!execMap) return;
-  if (execGeoJsonLayer) { execMap.removeLayer(execGeoJsonLayer); execGeoJsonLayer = null; }
-  if (!routeData || routeData.length === 0) return;
+  if (execGeoJsonLayer) { 
+    execMap.removeLayer(execGeoJsonLayer); 
+    execGeoJsonLayer = null; 
+  }
+  if (!data || data.length === 0) return;
 
-  // 1. รวมสถิติรายจังหวัดจากฐานข้อมูล (จัดกลุ่มด้วยชื่อภาษาไทยที่ตัดช่องว่าง)
-  const provAvailMap = {};
-  routeData.forEach(row => {
-    const rawProv = String(row['จังหวัด'] || row.province || '').trim();
-    if (rawProv && rawProv !== '-' && rawProv !== 'undefined') {
-      const cleanProv = cleanAllSpaces(rawProv);
-      const pctTotal = parseSafeNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0);
-      const availPct = Math.max(0, 100 - pctTotal);
+  // 1. สร้าง Map ดัชนีข้อมูลรายจังหวัด (รองรับทั้ง View สรุป และข้อมูลดิบ)
+  const provMap = {};
+  const isSummaryView = data[0]?.hasOwnProperty('avg_avail_pct') || data[0]?.hasOwnProperty('province_th');
 
-      if (!provAvailMap[cleanProv]) {
-        provAvailMap[cleanProv] = { count: 0, sumAvail: 0, displayName: rawProv };
+  if (isSummaryView) {
+    // 💡 ดึงจาก view_exec_province_summary (ประมวลผลเร็วพิเศษ)
+    data.forEach(row => {
+      const keyTh = cleanAllSpaces(row.province_th || '');
+      const keyEn = cleanAllSpaces(row.province_en || '');
+      const item = {
+        displayName: row.province_th || row.province_en,
+        avgAvail: row.has_data && row.avg_avail_pct !== null ? Number(row.avg_avail_pct) : null,
+        count: Number(row.total_routes || 0),
+        hasData: Boolean(row.has_data && Number(row.total_routes) > 0)
+      };
+      if (keyTh) provMap[keyTh] = item;
+      if (keyEn) provMap[keyEn] = item;
+    });
+  } else {
+    // 💡 Fallback กรณีส่งข้อมูลเส้นทางดิบ (Raw routes) เข้ามา
+    data.forEach(row => {
+      const rawProv = String(row['จังหวัด'] || row.province || '').trim();
+      if (rawProv && rawProv !== '-' && rawProv !== 'undefined') {
+        const cleanProv = cleanAllSpaces(rawProv);
+        const pctTotal = parseSafeNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0);
+        const availPct = Math.max(0, 100 - pctTotal);
+
+        if (!provMap[cleanProv]) {
+          provMap[cleanProv] = { count: 0, sumAvail: 0, displayName: rawProv };
+        }
+        provMap[cleanProv].count += 1;
+        provMap[cleanProv].sumAvail += availPct;
       }
-      provAvailMap[cleanProv].count += 1;
-      provAvailMap[cleanProv].sumAvail += availPct;
-    }
-  });
+    });
+
+    Object.keys(provMap).forEach(k => {
+      const item = provMap[k];
+      item.avgAvail = Math.round(item.sumAvail / item.count);
+      item.hasData = true;
+    });
+  }
 
   try {
     const geoData = await loadThailandGeoJSON();
 
     execGeoJsonLayer = L.geoJSON(geoData, {
       style: (feature) => {
-        const rawGeoName = feature.properties?.name || '';
-        const thaiName = getThaiProvinceName(rawGeoName);
+        const rawGeoName = feature.properties?.name || feature.properties?.name_th || '';
+        const cleanGeo = cleanAllSpaces(rawGeoName);
+        const thaiName = typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName;
         const cleanThai = cleanAllSpaces(thaiName);
 
-        // ดึงสถิติความจุว่าง
-        const stat = provAvailMap[cleanThai] || Object.entries(provAvailMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1];
-        const avgAvail = stat ? Math.round(stat.sumAvail / stat.count) : null;
+        // ดึงสถิติด้วยชื่ออังกฤษ หรือชื่อไทย
+        const stat = provMap[cleanGeo] || provMap[cleanThai] || 
+                     Object.entries(provMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1];
+
+        const avgAvail = stat && stat.hasData ? stat.avgAvail : null;
 
         return {
           fillColor: getExecChoroplethColor(avgAvail),
@@ -346,18 +377,22 @@ async function renderExecRouteHeatmap(routeData) {
         };
       },
       onEachFeature: (feature, layer) => {
-        const rawGeoName = feature.properties?.name || '';
-        const thaiName = getThaiProvinceName(rawGeoName);
+        const rawGeoName = feature.properties?.name || feature.properties?.name_th || '';
+        const cleanGeo = cleanAllSpaces(rawGeoName);
+        const thaiName = typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName;
         const cleanThai = cleanAllSpaces(thaiName);
 
-        const stat = provAvailMap[cleanThai] || Object.entries(provAvailMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1];
-        const avgAvail = stat ? Math.round(stat.sumAvail / stat.count) : 0;
+        const stat = provMap[cleanGeo] || provMap[cleanThai] || 
+                     Object.entries(provMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1];
+
+        const hasData = Boolean(stat && stat.hasData);
+        const avgAvail = hasData ? stat.avgAvail : 0;
         const count = stat ? stat.count : 0;
-        const hasData = stat !== undefined;
+        const displayTitle = stat?.displayName || thaiName;
 
         layer.bindTooltip(`
           <div class="px-2 py-1 text-xs font-sans">
-            <strong class="text-slate-800 dark:text-white block font-bold">${thaiName}</strong>
+            <strong class="text-slate-800 dark:text-white block font-bold">${displayTitle}</strong>
             ${hasData ? `
               <span class="text-emerald-600 dark:text-emerald-400 font-extrabold block">Available Backhaul: ${avgAvail}%</span>
               <span class="text-slate-400 block text-[10px]">${count.toLocaleString()} Routes</span>
@@ -415,7 +450,6 @@ function drawDashboardRoutes(filteredData = []) {
     if (!shipToDesc || shipToDesc === '-') shipToDesc = provName;
     if (!originName || !shipToDesc) return;
 
-    // 💡 ใช้ getMapRouteKey มาตรฐานเดียวกับ app.js
     const routeKey = getMapRouteKey(item);
 
     const tripVal = parseSafeNum(item['AVG Trip/Week'] || item.avg_trip_week, 0);
@@ -543,7 +577,7 @@ function drawDashboardRoutes(filteredData = []) {
             </div>
             <div class="flex justify-between items-center text-[10px] mt-1 pt-1 border-t border-slate-200/50 dark:border-slate-700">
               <span class="text-slate-400">Available Volume:</span>
-              <strong class="${textColor}">~${route.totalAvailTrips.toFixed(1)} /wk <span class="text-[9px] font-normal text-slate-400">(~${availTripsDay.toFixed(1)} /day)</span></strong>
+              <strong class="${textColor}">~${route.totalAvailTrips.toFixed(1)} trips/wk <span class="text-[9px] font-normal text-slate-400">(~${availTripsDay.toFixed(1)} trips/day)</span></strong>
             </div>
           </div>
         </div>
@@ -556,7 +590,6 @@ function drawDashboardRoutes(filteredData = []) {
       L.DomEvent.stopPropagation(e);
       highlightMapRoute(route.key);
       if (typeof window.focusTableRowByMapKey === 'function') {
-        // 💡 ส่ง route.key ที่ตรงกันเป๊ะไปให้ app.js กรองตาราง
         window.focusTableRowByMapKey(route.key);
       }
     });
