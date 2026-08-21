@@ -6,12 +6,12 @@ let execRouteSummaryData = [];
 let provinceLocationMap = {};
 let originLocationMap = {};
 
-// 1. ดึงข้อมูลเส้นทางพร้อมพิกัดแบบคู่ขนาน (Parallel Fetching - เร็วขึ้น 4-5 เท่า)
+// ใน api.js
 async function fetchNewRouteSheet() {
   try {
     const step = 1000;
     
-    // นับจำนวนแถวทั้งหมดก่อน
+    // 1. นับจำนวนแถวทั้งหมด
     const { count, error: countErr } = await db
       .from('view_routes_with_coords')
       .select('*', { count: 'exact', head: true });
@@ -19,7 +19,32 @@ async function fetchNewRouteSheet() {
     if (countErr) throw countErr;
     if (!count || count === 0) return [];
 
-    // สร้าง Batch คำขอดึงข้อมูลพร้อมกัน
+    // 💡 รายชื่อคอลัมน์ที่ตรงกับฐานข้อมูลจริง 100%
+    const selectedColumns = [
+      'id',
+      'origin',
+      'customer_name',
+      'customer_type',
+      'product_category',
+      'province',
+      'zone',
+      'truck_type',
+      'fwd_agent_desc',
+      'ship_to_desc',
+      'avg_trip_week',
+      'avg_off_peak',
+      'avg_peak',
+      'pct_brf_outside',
+      'brf_outside_route',
+      'pct_boonrawd',
+      'pct_own',
+      'pct_total',
+      'dest_lat',
+      'dest_lng',
+      'is_exact_location'
+    ].join(',');
+
+    // 2. ดึงข้อมูลแบบคู่ขนาน (Parallel Batches)
     const totalBatches = Math.ceil(count / step);
     const batchPromises = [];
 
@@ -29,14 +54,12 @@ async function fetchNewRouteSheet() {
       batchPromises.push(
         db
           .from('view_routes_with_coords')
-          .select('id, origin, province, ship_to, ship_to_desc, pct_total, avg_trip_week, fwd_agent_desc, dest_lat, dest_lng, is_exact_location')
+          .select(selectedColumns)
           .range(from, to)
       );
     }
 
     const batchResults = await Promise.all(batchPromises);
-    
-    // รวมผลลัพธ์ทุก Batch เข้าเป็น Array เดียว
     globalRouteSheetData = batchResults.flatMap(res => res.data || []);
     return globalRouteSheetData;
 

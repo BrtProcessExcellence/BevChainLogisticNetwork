@@ -1145,6 +1145,56 @@ window.focusTableRowByMapKey = function(mapKey) {
     });
   }, 200);
 };
+// ==============================================================================
+// ฟังก์ชันกรองตารางข้อมูลเฉพาะต้นทางที่ถูกคลิกเลือกจากแผนที่ (Origin Filter Bridge)
+// ==============================================================================
+window.filterTableByOrigin = function(originName) {
+  if (!originName) {
+    applyDynamicFilters();
+    return;
+  }
+
+  // 1. ถ้าตารางถูกพับเก็บอยู่ ให้สั่งกางออกอัตโนมัติ
+  const tc = document.getElementById('table-container');
+  const chevron = document.getElementById('table-chevron');
+  if (tc && tc.classList.contains('table-hidden')) {
+    state.isTableExpanded = true;
+    tc.classList.remove('table-hidden');
+    tc.classList.add('table-expanded');
+    if (chevron && typeof lucide !== 'undefined') {
+      chevron.setAttribute('data-lucide', 'chevron-down');
+      lucide.createIcons();
+    }
+  }
+
+  const cleanTargetOrigin = cleanAllSpaces(originName);
+  const sourceData = (globalRouteSheetData && globalRouteSheetData.length > 0)
+    ? globalRouteSheetData
+    : [];
+
+  // 2. กรองข้อมูลเฉพาะแถวที่มีต้นทางตรงกับ DC ที่เลือก
+  const matchedRows = sourceData.filter(row => {
+    const rowOrigin = cleanAllSpaces(row['ต้นทาง'] || row.origin || '');
+    return rowOrigin === cleanTargetOrigin || rowOrigin.includes(cleanTargetOrigin);
+  });
+
+  if (matchedRows.length === 0) {
+    showToast(`⚠️ ไม่พบข้อมูลเส้นทางสำหรับต้นทาง: ${originName}`);
+    return;
+  }
+
+  // 3. รีเฟรชตารางและตัวนับหน้า
+  currentPage = 1;
+  currentFilteredData = matchedRows;
+  renderTable(matchedRows);
+  showToast(`📍 กรองเฉพาะต้นทาง: ${originName} | พบ ${matchedRows.length.toLocaleString()} รายการ`);
+
+  // 4. เลื่อนมุมมองหน้าจอลงมาที่ตารางข้อมูลอย่างนุ่มนวล
+  setTimeout(() => {
+    const tableEl = document.getElementById('table-container');
+    if (tableEl) tableEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 150);
+};
 
 function renderPaginationControls(totalPages, totalItems) {
   const paginationEl = document.getElementById('table-pagination');
@@ -1615,6 +1665,7 @@ function renderChat() {
   `).join('');
   msgContainer.scrollTop = msgContainer.scrollHeight;
 }
+
 
 // ==============================================================================
 // 9. EXPORT & EVENT LISTENERS

@@ -1,6 +1,6 @@
 /**
  * ==============================================================================
- * MAP CONTROLLER & VISUALIZATION ENGINE (REFACTORED & SYNCHRONIZED)
+ * MAP CONTROLLER & VISUALIZATION ENGINE (FIXED & FULLY SYNCHRONIZED)
  * ==============================================================================
  */
 
@@ -8,7 +8,11 @@
 let dashMap = null, simMap = null, execMap = null;
 let dashLayerGrp = null, simLayerGrp = null;
 let tileLayerObj = null, simTileLayer = null, execTileLayer = null;
-let currentHeatLayer = null, execGeoJsonLayer = null, execHeatLayer = null;
+let currentHeatLayer = null, execGeoJsonLayer = null;
+
+// Canvas Renderers สำหรับเร่งความเร็ว
+let routeCanvasRenderer = null;
+let dotCanvasRenderer = null;
 
 // 2. Simulation & Animation State
 let movingMarkers = [];
@@ -18,13 +22,16 @@ window.simSubconRouteLayers = window.simSubconRouteLayers || {};
 
 // 3. Performance & Lookup Caches
 let cachedThailandGeoJSON = null;
+let geoJsonLoadingPromise = null;
 const coordCache = {};
 const nodeCache = {};
 let routePolylineMap = {};
 let currentHighlightedKey = null;
+let currentHighlightedOrigin = null;
 window.shippingLocationLookup = window.shippingLocationLookup || {};
 window.shippingLocationComposite = window.shippingLocationComposite || {};
 window.roadRouteGeometryCache = window.roadRouteGeometryCache || {};
+
 
 // ==============================================================================
 // 1. CORE HELPER FUNCTIONS
@@ -60,7 +67,6 @@ function parseLatLng(latLngStr) {
   return null;
 }
 
-// 💡 2-Dimensional Map Key มาตรฐานเดียวกับ app.js
 function getMapRouteKey(row) {
   if (!row) return '';
   const origin = cleanAllSpaces(row['ต้นทาง'] || row.origin);
@@ -68,6 +74,33 @@ function getMapRouteKey(row) {
   let shipTo = cleanAllSpaces(row['Description(Ship-To (Outbound))'] || row.ship_to_desc);
   if (!shipTo || shipTo === '-') shipTo = prov;
   return `${origin}__${shipTo}`;
+}
+
+function getThaiProvinceName(enName) {
+  if (!enName) return '-';
+  const clean = cleanAllSpaces(enName);
+  if (PROVINCE_NAME_MAP[clean]) return PROVINCE_NAME_MAP[clean];
+  const matchedKey = Object.keys(PROVINCE_NAME_MAP).find(k => clean.includes(k) || k.includes(clean));
+  return matchedKey ? PROVINCE_NAME_MAP[matchedKey] : enName;
+}
+
+function getCurvePoints(lat1, lng1, lat2, lng2, offset = 0) {
+  const points = [];
+  const midLat = (lat1 + lat2) / 2;
+  const midLng = (lng1 + lng2) / 2;
+  const dLat = lat2 - lat1;
+  const dLng = lng2 - lng1;
+  const ctrlLat = midLat - dLng * offset;
+  const ctrlLng = midLng + dLat * offset;
+
+  points.push([lat1, lng1]);
+  for (let t = 0.1; t < 0.9; t += 0.1) {
+    const lat = (1 - t) * (1 - t) * lat1 + 2 * (1 - t) * t * ctrlLat + t * t * lat2;
+    const lng = (1 - t) * (1 - t) * lng1 + 2 * (1 - t) * t * ctrlLng + t * t * lng2;
+    points.push([lat, lng]);
+  }
+  points.push([lat2, lng2]);
+  return points;
 }
 
 // ==============================================================================
@@ -82,6 +115,10 @@ function initMaps() {
     dashMap = L.map('map-dashboard', mapOptions).setView([13.75, 100.5], 6);
     dashLayerGrp = L.layerGroup().addTo(dashMap);
     initMapPanes(dashMap);
+
+    // สร้าง Canvas Renderers แยกตาม Layer
+    routeCanvasRenderer = L.canvas({ pane: 'routePane', padding: 0.5 });
+    dotCanvasRenderer = L.canvas({ pane: 'destDotPane', padding: 0.5 });
   }
 
   const simContainer = document.getElementById('map-simulation');
@@ -104,14 +141,26 @@ function initMaps() {
 
 function initMapPanes(map) {
   if (!map) return;
+
   if (!map.getPane('heatPane')) {
     map.createPane('heatPane');
-    map.getPane('heatPane').style.zIndex = 250;
+    map.getPane('heatPane').style.zIndex = 200;
     map.getPane('heatPane').style.pointerEvents = 'none';
   }
-  if (!map.getPane('markerPane')) {
-    map.createPane('markerPane');
-    map.getPane('markerPane').style.zIndex = 600;
+
+  if (!map.getPane('routePane')) {
+    map.createPane('routePane');
+    map.getPane('routePane').style.zIndex = 400;
+  }
+
+  if (!map.getPane('destDotPane')) {
+    map.createPane('destDotPane');
+    map.getPane('destDotPane').style.zIndex = 500;
+  }
+
+  if (!map.getPane('dcPane')) {
+    map.createPane('dcPane');
+    map.getPane('dcPane').style.zIndex = 700;
   }
 }
 
@@ -150,41 +199,9 @@ function updateMapTiles() {
 // ==============================================================================
 // 3. ROUTING & LOCATION RESOLVER ENGINE
 // ==============================================================================
-function initShippingLocationLookup(shippingLocationRows = []) {
-  window.shippingLocationLookup = {};
-  window.shippingLocationComposite = {};
-
-  shippingLocationRows.forEach(row => {
-    const shipToCode = String(row['Ship-To (Outbound)'] || row.ship_to_code || row.ship_to || '').trim();
-    const shipToDesc = String(row['Description(Ship-To (Outbound))'] || row.ship_to_desc || '').trim();
-    const city = String(row['City'] || row.city || row['จังหวัด'] || '').trim();
-    const rawLatLng = row['LAT,LONG'] || row['lat_long'] || row['lat,long'] || '';
-    const coords = parseLatLng(rawLatLng);
-
-    if (coords && isValidThailandCoord(coords.lat, coords.lng)) {
-      const locData = {
-        lat: coords.lat,
-        lng: coords.lng,
-        city: city,
-        shipToDesc: shipToDesc,
-        shipToCode: shipToCode
-      };
-
-      const cDesc = cleanAllSpaces(shipToDesc);
-      const cCity = cleanAllSpaces(city);
-      const cCode = cleanAllSpaces(shipToCode);
-
-      if (cCity && cDesc) window.shippingLocationComposite[`${cCity}__${cDesc}`] = locData;
-      if (cCode && cCode !== '-') window.shippingLocationLookup[cCode] = locData;
-      if (cDesc) window.shippingLocationLookup[cDesc] = locData;
-    }
-  });
-}
-
 function resolveDestinationCoords(rowOrDesc, provinceFallback = '') {
   if (!rowOrDesc) return null;
 
-  // 💡 1. ถ้ามีพิกัด dest_lat, dest_lng ติดมาจาก Supabase View ให้ใช้ทันที (เร็วที่สุดและตรงที่สุด)
   if (typeof rowOrDesc === 'object') {
     const lat = parseFloat(rowOrDesc.dest_lat || rowOrDesc.lat);
     const lng = parseFloat(rowOrDesc.dest_lng || rowOrDesc.lng);
@@ -194,7 +211,6 @@ function resolveDestinationCoords(rowOrDesc, provinceFallback = '') {
     }
   }
 
-  // 💡 2. Fallback: ถ้าไม่มีพิกัดติดมา ให้ค้นหาพิกัดกึ่งกลางจังหวัด
   const province = typeof rowOrDesc === 'object' 
     ? (rowOrDesc.province || rowOrDesc['จังหวัด'] || provinceFallback) 
     : (rowOrDesc || provinceFallback);
@@ -222,11 +238,6 @@ function resolveLocationCoords(locationKey) {
     else if (originLocationMap[cleanKey]) result = [originLocationMap[cleanKey].lat, originLocationMap[cleanKey].lng];
   }
 
-  if (!result && typeof shipToLocationMap !== 'undefined') {
-    if (shipToLocationMap[exactKey]) result = [shipToLocationMap[exactKey].lat, shipToLocationMap[exactKey].lng];
-    else if (shipToLocationMap[cleanKey]) result = [shipToLocationMap[cleanKey].lat, shipToLocationMap[cleanKey].lng];
-  }
-
   if (!result && typeof provinceLocationMap !== 'undefined') {
     if (provinceLocationMap[exactKey]) result = [provinceLocationMap[exactKey].lat, provinceLocationMap[exactKey].lng];
     else if (provinceLocationMap[cleanKey]) result = [provinceLocationMap[cleanKey].lat, provinceLocationMap[cleanKey].lng];
@@ -243,43 +254,24 @@ function resolveLocationCoords(locationKey) {
   return result;
 }
 
-function getCurvePoints(lat1, lng1, lat2, lng2, offset = 0) {
-  const points = [];
-  const midLat = (lat1 + lat2) / 2;
-  const midLng = (lng1 + lng2) / 2;
-  const dLat = lat2 - lat1;
-  const dLng = lng2 - lng1;
-  const ctrlLat = midLat - dLng * offset;
-  const ctrlLng = midLng + dLat * offset;
-
-  points.push([lat1, lng1]);
-  for (let t = 0.05; t < 0.95; t += 0.05) {
-    const lat = (1 - t) * (1 - t) * lat1 + 2 * (1 - t) * t * ctrlLat + t * t * lat2;
-    const lng = (1 - t) * (1 - t) * lng1 + 2 * (1 - t) * t * ctrlLng + t * t * lng2;
-    points.push([lat, lng]);
-  }
-  points.push([lat2, lng2]);
-  return points;
-}
-
-// ใน map.js
-
+// ==============================================================================
+// 4. EXECUTIVE DASHBOARD CHOROPLETH
+// ==============================================================================
 async function loadThailandGeoJSON() {
-  // 1. ถ้าเคยโหลดมาแล้ว ดึงจาก RAM ทันที (0 ms)
   if (cachedThailandGeoJSON) return cachedThailandGeoJSON;
+  if (geoJsonLoadingPromise) return geoJsonLoadingPromise;
 
-  try {
-    // 2. ดึงจากไฟล์ Local ในโปรเจกต์โดยตรง (เร็วและเสถียรที่สุด)
-    const response = await fetch('./data/thailand.json');
-    if (!response.ok) throw new Error(`Status: ${response.status}`);
-    
-    cachedThailandGeoJSON = await response.json();
-    return cachedThailandGeoJSON;
+  geoJsonLoadingPromise = (async () => {
+    try {
+      const response = await fetch('./data/thailand.json');
+      if (response.ok) {
+        cachedThailandGeoJSON = await response.json();
+        return cachedThailandGeoJSON;
+      }
+    } catch (e) {
+      console.warn('Local GeoJSON fallback to CDN...');
+    }
 
-  } catch (localErr) {
-    console.warn('Local GeoJSON not found, switching to CDN fallback...', localErr);
-
-    // 3. ระบบสำรอง (Fallback) เผื่อกรณีหาไฟล์ในโปรเจกต์ไม่เจอ
     const cdnUrls = [
       'https://cdn.jsdelivr.net/gh/apisit/thailand.json@master/thailand.json',
       'https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json'
@@ -292,30 +284,27 @@ async function loadThailandGeoJSON() {
           cachedThailandGeoJSON = await cdnRes.json();
           return cachedThailandGeoJSON;
         }
-      } catch (e) {
-        console.warn(`CDN mirror failed: ${url}`);
+      } catch (err) {
+        console.warn(`CDN fallback failed (${url})`);
       }
     }
+    throw new Error("Unable to load Thailand GeoJSON.");
+  })();
 
-    throw new Error("Unable to load Thailand GeoJSON from any source.");
+  try {
+    return await geoJsonLoadingPromise;
+  } finally {
+    geoJsonLoadingPromise = null;
   }
 }
 
 function getExecChoroplethColor(availPct) {
-  if (availPct === null || availPct === undefined || isNaN(availPct)) return '#f1f5f9';
+  if (availPct === null || availPct === undefined || isNaN(availPct)) return '#94a3b8';
   const val = parseFloat(availPct);
-  if (val === 0) return '#334155';
+  if (val === 0) return '#000000';
   if (val <= 30) return '#ef4444';
-  if (val <= 70) return '#f59e0b';
+  if (val <= 70) return '#f97316';
   return '#10b981';
-}
-
-function getThaiProvinceName(enName) {
-  if (!enName) return '-';
-  const clean = cleanAllSpaces(enName);
-  if (PROVINCE_NAME_MAP[clean]) return PROVINCE_NAME_MAP[clean];
-  const matchedKey = Object.keys(PROVINCE_NAME_MAP).find(k => clean.includes(k) || k.includes(clean));
-  return matchedKey ? PROVINCE_NAME_MAP[matchedKey] : enName;
 }
 
 async function renderExecRouteHeatmap(data) {
@@ -326,12 +315,10 @@ async function renderExecRouteHeatmap(data) {
   }
   if (!data || data.length === 0) return;
 
-  // 1. สร้าง Map ดัชนีข้อมูลรายจังหวัด (รองรับทั้ง View สรุป และข้อมูลดิบ)
   const provMap = {};
   const isSummaryView = data[0]?.hasOwnProperty('avg_avail_pct') || data[0]?.hasOwnProperty('province_th');
 
   if (isSummaryView) {
-    // 💡 ดึงจาก view_exec_province_summary (ประมวลผลเร็วพิเศษ)
     data.forEach(row => {
       const keyTh = cleanAllSpaces(row.province_th || '');
       const keyEn = cleanAllSpaces(row.province_en || '');
@@ -345,7 +332,6 @@ async function renderExecRouteHeatmap(data) {
       if (keyEn) provMap[keyEn] = item;
     });
   } else {
-    // 💡 Fallback กรณีส่งข้อมูลเส้นทางดิบ (Raw routes) เข้ามา
     data.forEach(row => {
       const rawProv = String(row['จังหวัด'] || row.province || '').trim();
       if (rawProv && rawProv !== '-' && rawProv !== 'undefined') {
@@ -375,10 +361,9 @@ async function renderExecRouteHeatmap(data) {
       style: (feature) => {
         const rawGeoName = feature.properties?.name || feature.properties?.name_th || '';
         const cleanGeo = cleanAllSpaces(rawGeoName);
-        const thaiName = typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName;
+        const thaiName = getThaiProvinceName(rawGeoName);
         const cleanThai = cleanAllSpaces(thaiName);
 
-        // ดึงสถิติด้วยชื่ออังกฤษ หรือชื่อไทย
         const stat = provMap[cleanGeo] || provMap[cleanThai] || 
                      Object.entries(provMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1];
 
@@ -395,7 +380,7 @@ async function renderExecRouteHeatmap(data) {
       onEachFeature: (feature, layer) => {
         const rawGeoName = feature.properties?.name || feature.properties?.name_th || '';
         const cleanGeo = cleanAllSpaces(rawGeoName);
-        const thaiName = typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName;
+        const thaiName = getThaiProvinceName(rawGeoName);
         const cleanThai = cleanAllSpaces(thaiName);
 
         const stat = provMap[cleanGeo] || provMap[cleanThai] || 
@@ -435,20 +420,22 @@ async function renderExecRouteHeatmap(data) {
     console.error('Failed to render Executive Map:', err);
   }
 }
+
 // ==============================================================================
-// 5. DASHBOARD ROUTE MAP RENDERING (EXACT MATCH WITH TABLE)
+// 5. DASHBOARD ROUTE MAP RENDERING (FIXED CANVAS RENDERER)
 // ==============================================================================
 function drawDashboardRoutes(filteredData = []) {
   if (!dashMap) return;
 
-  if (!dashLayerGrp) {
-    dashLayerGrp = L.layerGroup().addTo(dashMap);
-  } else {
+  if (dashLayerGrp) {
     dashLayerGrp.clearLayers();
+  } else {
+    dashLayerGrp = L.layerGroup().addTo(dashMap);
   }
 
   routePolylineMap = {};
   currentHighlightedKey = null;
+
   if (!filteredData || filteredData.length === 0) return;
 
   if (typeof renderUniqueDCPins === 'function') {
@@ -527,18 +514,20 @@ function drawDashboardRoutes(filteredData = []) {
     allBoundsPoints.push(originCoords, destCoords);
 
     const densityRatio = Math.sqrt(route.totalTrips / (maxTrips || 1));
-    const lineWeight = Math.max(3, densityRatio * 12);
-    const lineOpacity = Math.max(0.7, densityRatio);
+    const lineWeight = Math.max(1.8, Math.min(2.5, 1.6 + densityRatio * 0.9));
+    const lineOpacity = 0.92;
 
-    const avgPctTotal = route.sumPct / route.rowCount;
-    const avgAvailPct = Math.max(0, 100 - avgPctTotal);
+    const avgAvailPct = route.totalTrips > 0
+      ? (route.totalAvailTrips / route.totalTrips) * 100
+      : Math.max(0, 100 - (route.sumPct / (route.rowCount || 1)));
+
     const availTripsDay = route.totalAvailTrips / 6;
 
     let lineColor = '#10b981';
     let textColor = 'text-emerald-500';
 
     if (avgAvailPct === 0) {
-      lineColor = '#000000';
+      lineColor = '#475569';
       textColor = 'text-slate-900 dark:text-slate-100 font-black';
     } else if (avgAvailPct <= 30) {
       lineColor = '#ef4444';
@@ -556,17 +545,36 @@ function drawDashboardRoutes(filteredData = []) {
     const curveOffset = 0.12 * (index % 2 === 0 ? 1 : -1);
     const curvePoints = getCurvePoints(originCoords[0], originCoords[1], destCoords[0], destCoords[1], curveOffset);
 
+    // 1. เส้นขอบเงา (Casing) ช่วยให้เส้นลอยเด่นขึ้นจากพื้นหลังแผนที่
     const shadowPolyline = L.polyline(curvePoints, {
-      color: lineColor === '#000000' ? '#ffffff' : (isDarkTheme ? '#0f172a' : '#ffffff'),
-      weight: lineWeight + 3,
-      opacity: 0.9
+      renderer: routeCanvasRenderer,
+      color: isDarkTheme ? '#020617' : '#ffffff',
+      weight: lineWeight + 1.4,
+      opacity: isDarkTheme ? 0.45 : 0.65,
+      interactive: false
     }).addTo(dashLayerGrp);
 
+    // 2. เส้นทางหลัก (Main Arc)
     const mainPolyline = L.polyline(curvePoints, {
+      renderer: routeCanvasRenderer,
       color: lineColor,
       weight: lineWeight,
       opacity: lineOpacity,
-      lineCap: 'round'
+      lineCap: 'round',
+      lineJoin: 'round',
+      pane: 'routePane'
+    }).addTo(dashLayerGrp);
+
+    // 3. จุดปลายทาง (Destination Dot) ขนาดพอดีกับปลายเส้น
+    const destDotMarker = L.circleMarker(destCoords, {
+      renderer: dotCanvasRenderer,
+      radius: 3.0,          // 💡 ขนาดสมส่วนพอดี (ไม่เล็กเกินไป)
+      fillColor: lineColor,
+      fillOpacity: 1.0,     // สีทึบชัดเจน
+      color: '#ffffff',     // ขอบขาวตัดพื้นหลัง
+      weight: 1.2,          // ขอบบางคมชัด
+      opacity: 1.0,
+      pane: 'destDotPane'
     }).addTo(dashLayerGrp);
 
     const tooltipHtml = `
@@ -593,7 +601,7 @@ function drawDashboardRoutes(filteredData = []) {
             </div>
             <div class="flex justify-between items-center text-[10px] mt-1 pt-1 border-t border-slate-200/50 dark:border-slate-700">
               <span class="text-slate-400">Available Volume:</span>
-              <strong class="${textColor}">~${route.totalAvailTrips.toFixed(1)} trips/wk <span class="text-[9px] font-normal text-slate-400">(~${availTripsDay.toFixed(1)} trips/day)</span></strong>
+              <strong class="${textColor}">~${route.totalAvailTrips.toFixed(1)} /wk <span class="text-[9px] font-normal text-slate-400">(~${availTripsDay.toFixed(1)} /day)</span></strong>
             </div>
           </div>
         </div>
@@ -601,18 +609,23 @@ function drawDashboardRoutes(filteredData = []) {
     `;
 
     mainPolyline.bindTooltip(tooltipHtml, { sticky: true, className: 'custom-leaflet-tooltip' });
+    destDotMarker.bindTooltip(tooltipHtml, { sticky: true, className: 'custom-leaflet-tooltip' });
 
-    mainPolyline.on('click', (e) => {
+    const handleRouteClick = (e) => {
       L.DomEvent.stopPropagation(e);
       highlightMapRoute(route.key);
       if (typeof window.focusTableRowByMapKey === 'function') {
         window.focusTableRowByMapKey(route.key);
       }
-    });
+    };
+
+    mainPolyline.on('click', handleRouteClick);
+    destDotMarker.on('click', handleRouteClick);
 
     routePolylineMap[route.key] = {
       main: mainPolyline,
       shadow: shadowPolyline,
+      destDot: destDotMarker,
       baseWeight: lineWeight,
       baseOpacity: lineOpacity,
       color: lineColor
@@ -638,12 +651,20 @@ function highlightMapRoute(targetKey) {
   Object.keys(routePolylineMap).forEach(key => {
     const item = routePolylineMap[key];
     if (key === targetKey) {
-      item.main.setStyle({ color: item.color, weight: item.baseWeight + 5, opacity: 1.0 });
-      item.shadow.setStyle({ opacity: 0.9, weight: item.baseWeight + 8 });
+      item.main.setStyle({ color: item.color, weight: item.baseWeight + 2.5, opacity: 1.0 });
+      item.shadow.setStyle({ opacity: 0.85, weight: item.baseWeight + 4.5 });
       item.main.bringToFront();
+      if (item.destDot) {
+        item.destDot.setRadius(5.5);
+        item.destDot.setStyle({ fillColor: item.color, color: '#ffffff', weight: 2, fillOpacity: 1, opacity: 1 });
+        item.destDot.bringToFront();
+      }
     } else {
-      item.main.setStyle({ opacity: 0.15, weight: Math.max(2, item.baseWeight * 0.5) });
+      item.main.setStyle({ opacity: 0.1, weight: Math.max(1, item.baseWeight * 0.6) });
       item.shadow.setStyle({ opacity: 0.05 });
+      if (item.destDot) {
+        item.destDot.setStyle({ opacity: 0.15, fillOpacity: 0.15 });
+      }
     }
   });
 }
@@ -651,18 +672,39 @@ function highlightMapRoute(targetKey) {
 function resetMapRouteStyles() {
   if (!routePolylineMap) return;
   currentHighlightedKey = null;
+  currentHighlightedOrigin = null;
+
+  document.querySelectorAll('[id^="dc-pin-"]').forEach(el => {
+    el.classList.remove('ring-4', 'ring-orange-400', 'scale-110');
+  });
   
   Object.keys(routePolylineMap).forEach(key => {
     const item = routePolylineMap[key];
     item.main.setStyle({ color: item.color, weight: item.baseWeight, opacity: item.baseOpacity });
-    item.shadow.setStyle({ opacity: 0.9, weight: item.baseWeight + 3 });
+    item.shadow.setStyle({ opacity: 0.55, weight: item.baseWeight + 1.5 });
+    if (item.destDot) {
+      item.destDot.setRadius(2.2);
+      item.destDot.setStyle({ fillColor: item.color, color: '#ffffff', weight: 0.8, fillOpacity: 0.85, opacity: 0.9 });
+    }
   });
+
+  const currentMode = typeof state !== 'undefined' ? state?.activeFilters?.displayMode : 'routes';
+  if (currentMode === 'heatmap' || currentMode === 'hybrid') {
+    const activeData = typeof getFilteredData === 'function' ? getFilteredData() : (window.globalRouteSheetData || []);
+    const metric = state?.activeFilters?.heatMetric || 'volume';
+    const theme = state?.activeFilters?.heatTheme || 'thermal';
+    const radius = state?.activeFilters?.heatRadius || 35;
+    renderHeatmap(activeData, metric, theme, radius);
+  }
 
   if (typeof applyDynamicFilters === 'function') {
     applyDynamicFilters();
   }
 }
 
+// ==============================================================================
+// 6. ORIGIN DC PIN & FILTERING
+// ==============================================================================
 function renderUniqueDCPins(filteredData, targetMap = dashMap, targetLayerGrp = dashLayerGrp) {
   if (!targetMap || !targetLayerGrp || !filteredData || filteredData.length === 0) return;
 
@@ -674,22 +716,101 @@ function renderUniqueDCPins(filteredData, targetMap = dashMap, targetLayerGrp = 
     const coords = resolveLocationCoords(originName);
     if (!coords || !isValidThailandCoord(coords[0], coords[1])) return;
 
+    const cleanOrigin = cleanAllSpaces(originName);
+    const isFocused = currentHighlightedOrigin === cleanOrigin;
+
     const customHtml = `
-      <div class="hub-badge hub-badge-plant shadow-md">
+      <div id="dc-pin-${cleanOrigin}" class="hub-badge hub-badge-plant shadow-md cursor-pointer transition-all duration-300 ${isFocused ? 'ring-4 ring-orange-400 scale-110' : 'hover:scale-105'}">
         <span class="node-pulse-dot bg-orange-500"></span>
         <span class="font-bold font-sans">${originName}</span>
       </div>
     `;
 
-    L.marker(coords, {
-      icon: L.divIcon({ html: customHtml, className: 'custom-hub-marker', iconSize: [90, 24], iconAnchor: [45, 12] }),
-      pane: 'markerPane'
+    const marker = L.marker(coords, {
+      icon: L.divIcon({ 
+        html: customHtml, 
+        className: 'custom-hub-marker', 
+        iconSize: [90, 24], 
+        iconAnchor: [45, 12] 
+      }),
+      pane: 'dcPane'
     }).addTo(targetLayerGrp);
+
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      highlightRoutesByOrigin(originName, coords);
+    });
   });
 }
 
+function highlightRoutesByOrigin(originName, originCoords) {
+  if (!routePolylineMap || Object.keys(routePolylineMap).length === 0) return;
+
+  const cleanTargetOrigin = cleanAllSpaces(originName);
+
+  if (currentHighlightedOrigin === cleanTargetOrigin) {
+    resetMapRouteStyles();
+    return;
+  }
+
+  currentHighlightedOrigin = cleanTargetOrigin;
+  currentHighlightedKey = null;
+
+  const matchedBounds = [];
+  if (originCoords) matchedBounds.push(originCoords);
+
+  Object.keys(routePolylineMap).forEach(key => {
+    const item = routePolylineMap[key];
+    const isOriginMatch = key.startsWith(`${cleanTargetOrigin}__`);
+
+    if (isOriginMatch) {
+      item.main.setStyle({ color: item.color, weight: item.baseWeight + 1.5, opacity: 1.0 });
+      item.shadow.setStyle({ opacity: 0.9, weight: item.baseWeight + 3.5 });
+      item.main.bringToFront();
+
+      if (item.destDot) {
+        item.destDot.setRadius(4.5);
+        item.destDot.setStyle({ fillColor: item.color, color: '#ffffff', weight: 1.5, fillOpacity: 1, opacity: 1 });
+        item.destDot.bringToFront();
+        matchedBounds.push(item.destDot.getLatLng());
+      }
+    } else {
+      item.main.setStyle({ opacity: 0.05, weight: Math.max(1, item.baseWeight * 0.5) });
+      item.shadow.setStyle({ opacity: 0.01 });
+      if (item.destDot) {
+        item.destDot.setStyle({ opacity: 0.05, fillOpacity: 0.05 });
+      }
+    }
+  });
+
+  document.querySelectorAll('[id^="dc-pin-"]').forEach(el => {
+    el.classList.remove('ring-4', 'ring-orange-400', 'scale-110');
+  });
+  const activePin = document.getElementById(`dc-pin-${cleanTargetOrigin}`);
+  if (activePin) {
+    activePin.classList.add('ring-4', 'ring-orange-400', 'scale-110');
+  }
+
+  if (dashMap && matchedBounds.length > 0) {
+    dashMap.fitBounds(L.latLngBounds(matchedBounds), { padding: [60, 60], maxZoom: 9 });
+  }
+
+  if (typeof window.filterTableByOrigin === 'function') {
+    window.filterTableByOrigin(originName);
+  }
+
+  const currentMode = typeof state !== 'undefined' ? state?.activeFilters?.displayMode : 'routes';
+  if (currentMode === 'heatmap' || currentMode === 'hybrid') {
+    const activeData = typeof getFilteredData === 'function' ? getFilteredData() : (window.globalRouteSheetData || []);
+    const metric = state?.activeFilters?.heatMetric || 'volume';
+    const theme = state?.activeFilters?.heatTheme || 'thermal';
+    const radius = state?.activeFilters?.heatRadius || 35;
+    renderHeatmap(activeData, metric, theme, radius);
+  }
+}
+
 // ==============================================================================
-// 6. SIMULATION & ROAD ROUTE VISUALIZATION
+// 7. SIMULATION & ROAD ROUTE VISUALIZATION
 // ==============================================================================
 async function fetchRealRoadGeometry(startLatLng, endLatLng) {
   if (!startLatLng || !endLatLng) return null;
@@ -838,7 +959,7 @@ async function drawAllSheetRoutesOnSimMap(subconData, originName, provinceName, 
 }
 
 // ==============================================================================
-// 7. HEATMAP & DISPLAY CONTROLLER
+// 8. HEATMAP & DISPLAY CONTROLLER
 // ==============================================================================
 function renderHeatmap(filteredData, metric, themeKey, radius) {
   if (currentHeatLayer && dashMap) {
@@ -849,13 +970,20 @@ function renderHeatmap(filteredData, metric, themeKey, radius) {
   const container = dashMap.getContainer();
   if (container.clientWidth === 0 || container.clientHeight === 0 || !filteredData || filteredData.length === 0) return;
 
+  let targetData = filteredData;
+  if (currentHighlightedOrigin) {
+    targetData = filteredData.filter(item => {
+      const orig = cleanAllSpaces(item['ต้นทาง'] || item.origin || item.fromId || '');
+      return orig === currentHighlightedOrigin || orig.includes(currentHighlightedOrigin);
+    });
+  }
+
+  if (targetData.length === 0) return;
+
   const nodeWeightMap = {};
 
-  filteredData.forEach(item => {
+  targetData.forEach(item => {
     const originName = String(item['ต้นทาง'] || item.origin || item.fromId || '').trim();
-    let destName = String(item['Description(Ship-To (Outbound))'] || item.ship_to_desc || '').trim();
-    if (!destName || destName === '-') destName = String(item['จังหวัด'] || item.province || item.toId || '').trim();
-
     const originCoords = resolveLocationCoords(originName);
     const destCoords = resolveDestinationCoords(item, item['จังหวัด'] || item.province);
 
