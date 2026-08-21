@@ -1,9 +1,3 @@
-/**
- * ==============================================================================
- * MAP CONTROLLER & VISUALIZATION ENGINE (REFACTORED & SYNCHRONIZED)
- * ==============================================================================
- */
-
 // 1. Global Map Instances & Layer Groups
 let dashMap = null, simMap = null, execMap = null;
 let dashLayerGrp = null, simLayerGrp = null;
