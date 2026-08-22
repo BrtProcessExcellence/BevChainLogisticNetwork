@@ -6,12 +6,9 @@ let execRouteSummaryData = [];
 let provinceLocationMap = {};
 let originLocationMap = {};
 
-// ใน api.js
 async function fetchNewRouteSheet() {
   try {
     const step = 1000;
-    
-    // 1. นับจำนวนแถวทั้งหมด
     const { count, error: countErr } = await db
       .from('view_routes_with_coords')
       .select('*', { count: 'exact', head: true });
@@ -19,7 +16,6 @@ async function fetchNewRouteSheet() {
     if (countErr) throw countErr;
     if (!count || count === 0) return [];
 
-    // 💡 รายชื่อคอลัมน์ที่ตรงกับฐานข้อมูลจริง 100%
     const selectedColumns = [
       'id',
       'origin',
@@ -44,7 +40,6 @@ async function fetchNewRouteSheet() {
       'is_exact_location'
     ].join(',');
 
-    // 2. ดึงข้อมูลแบบคู่ขนาน (Parallel Batches)
     const totalBatches = Math.ceil(count / step);
     const batchPromises = [];
 
@@ -69,7 +64,6 @@ async function fetchNewRouteSheet() {
   }
 }
 
-// 2. ดึงสถิติภาพรวมรายจังหวัดสำหรับแผนที่ Executive Heatmap (77 แถว โหลดเร็ว 0.05 วิ)
 async function fetchExecProvinceSummary() {
   try {
     const { data, error } = await db
@@ -85,7 +79,6 @@ async function fetchExecProvinceSummary() {
   }
 }
 
-// 3. ดึงพิกัดต้นทาง (DC / Plant)
 async function fetchOriginLocations() {
   try {
     const { data, error } = await db
@@ -116,7 +109,6 @@ async function fetchOriginLocations() {
   }
 }
 
-// 4. ดึงพิกัดกึ่งกลางจังหวัด (Fallback)
 async function fetchProvinceLocations() {
   try {
     const { data, error } = await db
@@ -146,7 +138,6 @@ async function fetchProvinceLocations() {
   }
 }
 
-// 5. ดึงสรุป KPI ด้านบน (ถ้ามีการสร้าง RPC ไว้)
 async function fetchExecutiveSummaryKPI() {
   try {
     const { data, error } = await db.rpc('get_executive_summary_kpi');
@@ -167,15 +158,12 @@ async function initExecutiveDashboardFast() {
       fetchExecutiveSummaryKPI()
     ]);
 
-    // เรนเดอร์หน้า Executive ทันที
     if (typeof renderExecRouteHeatmap === 'function' && provSummary) {
       renderExecRouteHeatmap(provSummary);
     }
     if (typeof updateExecutiveKPICards === 'function' && kpi) {
       updateExecutiveKPICards(kpi);
     }
-
-    // 💡 2. สั่งโหลดข้อมูล 14,000 แถวไว้เบื้องหลัง (ไม่บล็อกหน้าจอ)
     setTimeout(() => {
       loadDetailedRoutesInBackground();
     }, 100);
@@ -185,7 +173,6 @@ async function initExecutiveDashboardFast() {
   }
 }
 
-// ฟังก์ชันโหลดตารางใหญ่ใน Background
 async function loadDetailedRoutesInBackground() {
   if (globalRouteSheetData && globalRouteSheetData.length > 0) return;
   console.log('🔄 Background: Loading full route data...');

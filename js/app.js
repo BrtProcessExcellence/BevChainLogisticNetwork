@@ -131,7 +131,7 @@ function showToast(msg) {
 }
 
 // ==============================================================================
-// 3. APPLICATION LIFECYCLE & DATA BOOTSTRAP
+// 3. APPLICATION LIFECYCLE & DATA BOOTSTRAP (OPTIMIZED & SYNCHRONIZED)
 // ==============================================================================
 async function initAppAfterLogin() {
   try {
@@ -145,6 +145,7 @@ async function initAppAfterLogin() {
   }
 
   try {
+    // 1. ดึงข้อมูลพิกัดและเส้นทางทั้งหมดพร้อมกัน
     const [provData, originData, routeData, shipToData] = await Promise.all([
       typeof fetchProvinceLocations === 'function' ? fetchProvinceLocations().catch(() => ({})) : Promise.resolve({}),
       typeof fetchOriginLocations === 'function' ? fetchOriginLocations().catch(() => ({})) : Promise.resolve({}),
@@ -152,17 +153,24 @@ async function initAppAfterLogin() {
       typeof fetchShippingLocations === 'function' ? fetchShippingLocations().catch(() => []) : Promise.resolve([])
     ]);
 
+    // 💡 ผูกข้อมูลพิกัดต้นทางและจังหวัดเข้าตัวแปร Global เพื่อให้ map.js ค้นหาพิกัดได้
+    window.provinceLocationMap = provData || {};
+    window.originLocationMap = originData || {};
+
+    // 2. จัดเก็บข้อมูลเส้นทางหลัก
     window.globalRouteSheetData = Array.isArray(routeData) ? routeData : [];
     globalRouteSheetData = window.globalRouteSheetData;
 
+    // 3. สร้าง Map พิกัดสถานที่ปลายทาง (Ship-To Locations)
     if (Array.isArray(shipToData) && shipToData.length > 0) {
       if (typeof initShippingLocationLookup === 'function') initShippingLocationLookup(shipToData);
+      
       shipToData.forEach(item => {
         const desc = String(item['Description(Ship-To (Outbound))'] || item.ship_to_desc || '').trim();
         const rawLatLng = item['LAT,LONG'] || item.lat_long || '';
         const coords = (typeof parseLatLng === 'function') ? parseLatLng(rawLatLng) : null;
-        const lat = coords ? coords.lat : parseFloat(item.lat);
-        const lng = coords ? coords.lng : parseFloat(item.lng);
+        const lat = coords ? coords.lat : parseFloat(item.lat || item.dest_lat);
+        const lng = coords ? coords.lng : parseFloat(item.lng || item.dest_lng);
 
         if (desc && !isNaN(lat) && !isNaN(lng)) {
           shipToLocationMap[desc] = { lat, lng };
@@ -171,10 +179,12 @@ async function initAppAfterLogin() {
       });
     }
 
+    // 4. เริ่มต้นตัวกรอง เรนเดอร์แผนที่ และแดชบอร์ด
     if (typeof populateDashboardFilters === 'function') populateDashboardFilters(globalRouteSheetData);
     if (typeof applyDynamicFilters === 'function') await applyDynamicFilters();
     if (typeof updateExecutiveDashboard === 'function') await updateExecutiveDashboard(globalRouteSheetData);
 
+    // 5. บังคับให้ Leaflet คำนวณขนาดหน้าจอใหม่หลังโหลดเสร็จ
     setTimeout(() => {
       if (typeof dashMap !== 'undefined' && dashMap) dashMap.invalidateSize();
       if (typeof simMap !== 'undefined' && simMap) simMap.invalidateSize();
@@ -183,6 +193,7 @@ async function initAppAfterLogin() {
 
   } catch (err) {
     console.error('Data Fetch Error:', err);
+    showToast('เกิดข้อผิดพลาดในการโหลดข้อมูลเริ่มต้น');
   }
 }
 
@@ -193,8 +204,18 @@ window.forceRefreshRouteData = async function() {
     if (Array.isArray(routeData)) {
       window.globalRouteSheetData = routeData;
       globalRouteSheetData = window.globalRouteSheetData;
+
+      // 💡 อัปเดตตัวกรอง Dropdown ให้สอดคล้องกับข้อมูลใหม่
+      if (typeof populateDashboardFilters === 'function') {
+        populateDashboardFilters(globalRouteSheetData);
+      }
+
       await applyDynamicFilters();
-      if (state.activeMenuId === 'exec') updateExecutiveDashboard(globalRouteSheetData);
+      
+      if (state.activeMenuId === 'exec' && typeof updateExecutiveDashboard === 'function') {
+        updateExecutiveDashboard(globalRouteSheetData);
+      }
+      
       showToast(`รีเฟรชสำเร็จ! ข้อมูล ${routeData.length.toLocaleString()} รายการ`);
     }
   } catch (err) {
