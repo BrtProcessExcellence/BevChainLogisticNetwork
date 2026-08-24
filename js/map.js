@@ -967,8 +967,20 @@ function renderHeatmap(filteredData, metric, themeKey, radius) {
     currentHeatLayer = null;
   }
   if (!dashMap || !dashMap.getContainer()) return;
+
+  // 💡 ตรวจสอบว่าแผนที่กำลังแสดงผลอยู่จริงและมีขนาดหน้าจอมากกว่า 0
   const container = dashMap.getContainer();
-  if (container.clientWidth === 0 || container.clientHeight === 0 || !filteredData || filteredData.length === 0) return;
+  const mapSize = dashMap.getSize();
+  if (
+    container.offsetWidth === 0 || 
+    container.offsetHeight === 0 || 
+    mapSize.x === 0 || 
+    mapSize.y === 0 || 
+    !filteredData || 
+    filteredData.length === 0
+  ) {
+    return;
+  }
 
   let targetData = filteredData;
   if (currentHighlightedOrigin) {

@@ -166,7 +166,7 @@ async function fetchShippingLocations() {
   try {
     const { data, error } = await db
       .from('Shipping location')
-      .select('City, Description(Ship-To (Outbound)), LAT,LONG');
+      .select('*'); 
 
     if (error) throw error;
     return data || [];
