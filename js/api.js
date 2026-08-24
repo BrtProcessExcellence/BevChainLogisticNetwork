@@ -1,11 +1,20 @@
+/**
+ * ==============================================================================
+ * API CONTROLLER & SUPABASE DATA CONNECTOR (OPTIMIZED & COMPLETE)
+ * ==============================================================================
+ */
+
 const db = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 
-// ตัวแปร Global สำหรับเก็บข้อมูลในหน่วยความจำ
-let globalRouteSheetData = [];
-let execRouteSummaryData = [];
-let provinceLocationMap = {};
-let originLocationMap = {};
+// ผูกตัวแปร Global กับ window เพื่อให้ app.js และ map.js เข้าถึงได้ 100%
+window.globalRouteSheetData = window.globalRouteSheetData || [];
+window.execRouteSummaryData = window.execRouteSummaryData || [];
+window.provinceLocationMap = window.provinceLocationMap || {};
+window.originLocationMap = window.originLocationMap || {};
 
+// ==============================================================================
+// 1. ดึงข้อมูลเส้นทางหลักพร้อมพิกัด (Batch Fetching from View)
+// ==============================================================================
 async function fetchNewRouteSheet() {
   try {
     const step = 1000;
@@ -50,13 +59,16 @@ async function fetchNewRouteSheet() {
         db
           .from('view_routes_with_coords')
           .select(selectedColumns)
+          .order('id', { ascending: true }) // 💡 เรียงลำดับป้องกันข้อมูลซ้ำข้าม Batch
           .range(from, to)
       );
     }
 
     const batchResults = await Promise.all(batchPromises);
-    globalRouteSheetData = batchResults.flatMap(res => res.data || []);
-    return globalRouteSheetData;
+    const combinedData = batchResults.flatMap(res => res.data || []);
+
+    window.globalRouteSheetData = combinedData;
+    return combinedData;
 
   } catch (err) {
     console.error('Error fetching routes from view_routes_with_coords:', err);
@@ -64,6 +76,9 @@ async function fetchNewRouteSheet() {
   }
 }
 
+// ==============================================================================
+// 2. ดึงข้อมูลสรุปรายจังหวัดสำหรับ Executive Dashboard
+// ==============================================================================
 async function fetchExecProvinceSummary() {
   try {
     const { data, error } = await db
@@ -71,14 +86,17 @@ async function fetchExecProvinceSummary() {
       .select('*');
 
     if (error) throw error;
-    execRouteSummaryData = data || [];
-    return execRouteSummaryData;
+    window.execRouteSummaryData = data || [];
+    return window.execRouteSummaryData;
   } catch (err) {
     console.error('Error fetching province summary view:', err);
     return [];
   }
 }
 
+// ==============================================================================
+// 3. ดึงพิกัดจุดต้นทาง (Origin DCs / Plants)
+// ==============================================================================
 async function fetchOriginLocations() {
   try {
     const { data, error } = await db
@@ -101,7 +119,7 @@ async function fetchOriginLocations() {
       }
     });
 
-    originLocationMap = map;
+    window.originLocationMap = map;
     return map;
   } catch (err) {
     console.error('Failed to fetch origin locations:', err);
@@ -109,6 +127,9 @@ async function fetchOriginLocations() {
   }
 }
 
+// ==============================================================================
+// 4. ดึงพิกัดกึ่งกลางจังหวัด 77 จังหวัด
+// ==============================================================================
 async function fetchProvinceLocations() {
   try {
     const { data, error } = await db
@@ -130,7 +151,7 @@ async function fetchProvinceLocations() {
       }
     });
 
-    provinceLocationMap = map;
+    window.provinceLocationMap = map;
     return map;
   } catch (err) {
     console.error('Failed to fetch province locations:', err);
@@ -138,17 +159,40 @@ async function fetchProvinceLocations() {
   }
 }
 
+// ==============================================================================
+// 5. 💡 ดึงพิกัดสถานที่ปลายทางระดับจุด (Shipping Locations)
+// ==============================================================================
+async function fetchShippingLocations() {
+  try {
+    const { data, error } = await db
+      .from('Shipping location')
+      .select('City, Description(Ship-To (Outbound)), LAT,LONG');
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.warn('Shipping locations table query skipped or empty:', err);
+    return [];
+  }
+}
+
+// ==============================================================================
+// 6. ดึงข้อมูล Executive KPI ผ่าน RPC (ถ้ามี)
+// ==============================================================================
 async function fetchExecutiveSummaryKPI() {
   try {
     const { data, error } = await db.rpc('get_executive_summary_kpi');
     if (error) throw error;
     return data;
   } catch (err) {
-    console.warn('KPI RPC not available, calculating fallback:', err);
+    console.warn('KPI RPC not available, using client-side fallback:', err);
     return null;
   }
 }
 
+// ==============================================================================
+// 7. FAST INITIALIZATION & BACKGROUND LOADER
+// ==============================================================================
 async function initExecutiveDashboardFast() {
   try {
     const [origins, provinces, provSummary, kpi] = await Promise.all([
@@ -174,8 +218,17 @@ async function initExecutiveDashboardFast() {
 }
 
 async function loadDetailedRoutesInBackground() {
-  if (globalRouteSheetData && globalRouteSheetData.length > 0) return;
+  if (window.globalRouteSheetData && window.globalRouteSheetData.length > 0) return;
   console.log('🔄 Background: Loading full route data...');
   await fetchNewRouteSheet();
   console.log('✅ Background: Full route data ready for Operation Tab');
 }
+
+// ผูกฟังก์ชันเข้ากับ window Object
+window.fetchNewRouteSheet = fetchNewRouteSheet;
+window.fetchExecProvinceSummary = fetchExecProvinceSummary;
+window.fetchOriginLocations = fetchOriginLocations;
+window.fetchProvinceLocations = fetchProvinceLocations;
+window.fetchShippingLocations = fetchShippingLocations;
+window.fetchExecutiveSummaryKPI = fetchExecutiveSummaryKPI;
+window.initExecutiveDashboardFast = initExecutiveDashboardFast;
