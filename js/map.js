@@ -316,43 +316,51 @@ async function renderExecRouteHeatmap(data) {
   if (!data || data.length === 0) return;
 
   const provMap = {};
-  const isSummaryView = data[0]?.hasOwnProperty('avg_avail_pct') || data[0]?.hasOwnProperty('province_th');
 
-  if (isSummaryView) {
-    data.forEach(row => {
-      const keyTh = cleanAllSpaces(row.province_th || '');
-      const keyEn = cleanAllSpaces(row.province_en || '');
-      const item = {
-        displayName: row.province_th || row.province_en,
-        avgAvail: row.has_data && row.avg_avail_pct !== null ? Number(row.avg_avail_pct) : null,
-        count: Number(row.total_routes || 0),
-        hasData: Boolean(row.has_data && Number(row.total_routes) > 0)
-      };
-      if (keyTh) provMap[keyTh] = item;
-      if (keyEn) provMap[keyEn] = item;
-    });
-  } else {
-    data.forEach(row => {
-      const rawProv = String(row['จังหวัด'] || row.province || '').trim();
-      if (rawProv && rawProv !== '-' && rawProv !== 'undefined') {
-        const cleanProv = cleanAllSpaces(rawProv);
-        const pctTotal = parseSafeNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0);
-        const availPct = Math.max(0, 100 - pctTotal);
-
-        if (!provMap[cleanProv]) {
-          provMap[cleanProv] = { count: 0, sumAvail: 0, displayName: rawProv };
-        }
-        provMap[cleanProv].count += 1;
-        provMap[cleanProv].sumAvail += availPct;
+  data.forEach(row => {
+    let rawProv = String(row['จังหวัด'] || row.province || row.province_th || '').trim();
+    if (rawProv && rawProv !== '-' && rawProv !== 'undefined') {
+      if (['กรุงเทพฯ', 'กทม.', 'กทม', 'กรุงเทพ'].includes(rawProv)) {
+        rawProv = 'กรุงเทพมหานคร';
       }
-    });
+      const cleanProv = cleanAllSpaces(rawProv);
 
-    Object.keys(provMap).forEach(k => {
-      const item = provMap[k];
-      item.avgAvail = Math.round(item.sumAvail / item.count);
-      item.hasData = true;
-    });
-  }
+      const trips = (typeof parseSafeNum === 'function') 
+        ? parseSafeNum(row['AVG Trip/Week'] || row.avg_trip_week || row.avg_trips, 0)
+        : (parseFloat(row['AVG Trip/Week'] || row.avg_trip_week) || 0);
+
+      const pctTotal = (typeof parseSafeNum === 'function')
+        ? parseSafeNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0)
+        : (parseFloat(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total) || 0);
+
+      const availPct = Math.max(0, 100 - pctTotal);
+      const availTrips = trips * (availPct / 100);
+
+      if (!provMap[cleanProv]) {
+        provMap[cleanProv] = { 
+          totalRoutes: 0, 
+          availRoutes: 0, 
+          totalTrips: 0, 
+          availTrips: 0, 
+          displayName: rawProv 
+        };
+      }
+
+      provMap[cleanProv].totalRoutes += 1;
+      provMap[cleanProv].totalTrips += trips;
+
+      if (availPct > 0) {
+        provMap[cleanProv].availRoutes += 1;
+        provMap[cleanProv].availTrips += availTrips;
+      }
+    }
+  });
+
+  Object.keys(provMap).forEach(k => {
+    const item = provMap[k];
+    item.zoneAvailPct = item.totalRoutes > 0 ? (item.availRoutes / item.totalRoutes) * 100 : 0;
+    item.hasData = item.totalRoutes > 0;
+  });
 
   try {
     const geoData = await loadThailandGeoJSON();
@@ -367,14 +375,14 @@ async function renderExecRouteHeatmap(data) {
         const stat = provMap[cleanGeo] || provMap[cleanThai] || 
                      Object.entries(provMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1];
 
-        const avgAvail = stat && stat.hasData ? stat.avgAvail : null;
+        const availRatio = stat && stat.hasData ? stat.zoneAvailPct : null;
 
         return {
-          fillColor: getExecChoroplethColor(avgAvail),
+          fillColor: getExecChoroplethColor(availRatio),
           weight: 1,
           opacity: 0.9,
           color: '#ffffff',
-          fillOpacity: avgAvail !== null ? 0.75 : 0.2
+          fillOpacity: availRatio !== null ? 0.75 : 0.2
         };
       },
       onEachFeature: (feature, layer) => {
@@ -387,16 +395,29 @@ async function renderExecRouteHeatmap(data) {
                      Object.entries(provMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1];
 
         const hasData = Boolean(stat && stat.hasData);
-        const avgAvail = hasData ? stat.avgAvail : 0;
-        const count = stat ? stat.count : 0;
+        const availPct = hasData ? stat.zoneAvailPct : 0;
+        const availRoutes = stat ? stat.availRoutes : 0;
+        const totalRoutes = stat ? stat.totalRoutes : 0;
+        const totalTrips = stat ? stat.totalTrips : 0;
+        const availTrips = stat ? stat.availTrips : 0;
         const displayTitle = stat?.displayName || thaiName;
 
         layer.bindTooltip(`
-          <div class="px-2 py-1 text-xs font-sans">
-            <strong class="text-slate-800 dark:text-white block font-bold">${displayTitle}</strong>
+          <div class="px-2.5 py-1.5 min-w-[200px] font-sans">
+            <strong class="text-slate-800 dark:text-white block font-bold text-xs border-b pb-1 mb-1.5 border-slate-200 dark:border-slate-700">${displayTitle}</strong>
             ${hasData ? `
-              <span class="text-emerald-600 dark:text-emerald-400 font-extrabold block">Available Backhaul: ${avgAvail}%</span>
-              <span class="text-slate-400 block text-[10px]">${count.toLocaleString()} Routes</span>
+              <div class="flex justify-between items-center mb-1">
+                <span class="text-slate-500 dark:text-slate-400 text-[11px]">Available Backhaul:</span>
+                <strong class="text-emerald-600 dark:text-emerald-400 font-extrabold text-xs">${availRoutes.toLocaleString()} routes (${availPct.toFixed(2)}%)</strong>
+              </div>
+              <div class="flex justify-between items-center text-[10px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+                <span>Total Registered:</span>
+                <span>${totalRoutes.toLocaleString()} routes (~${Math.round(totalTrips).toLocaleString()} trips/wk)</span>
+              </div>
+              <div class="flex justify-between items-center text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                <span>Available Volume:</span>
+                <span>~${Math.round(availTrips).toLocaleString()} trips/wk</span>
+              </div>
             ` : `
               <span class="text-slate-400 italic block text-[10px]">ไม่มีเส้นทางวิ่ง (No Data)</span>
             `}
@@ -601,7 +622,7 @@ function drawDashboardRoutes(filteredData = []) {
             </div>
             <div class="flex justify-between items-center text-[10px] mt-1 pt-1 border-t border-slate-200/50 dark:border-slate-700">
               <span class="text-slate-400">Available Volume:</span>
-              <strong class="${textColor}">~${route.totalAvailTrips.toFixed(1)} /wk <span class="text-[9px] font-normal text-slate-400">(~${availTripsDay.toFixed(1)} /day)</span></strong>
+              <strong class="${textColor}">~${route.totalAvailTrips.toFixed(1)} trips/wk <span class="text-[9px] font-normal text-slate-400">(~${availTripsDay.toFixed(1)} trips/day)</span></strong>
             </div>
           </div>
         </div>

@@ -165,7 +165,7 @@
                   </div>
                   <div id="kpi-distinct-total-trips" class="mt-2 text-[10px] space-y-0.5 text-slate-500 dark:text-slate-400 font-medium">
                     <div><strong class="text-slate-700 dark:text-slate-200">0</strong> trips/wk</div>
-                    <div class="text-[9px] text-slate-400 font-normal">(~0 /day • 6 days)</div>
+                    <div class="text-[9px] text-slate-400 font-normal">(~0 trips/day • 6 days)</div>
                   </div>
                 </div>
 
@@ -181,7 +181,7 @@
                   </div>
                   <div id="kpi-distinct-avail-trips" class="mt-2 text-[10px] space-y-0.5 text-emerald-600 dark:text-emerald-400 font-medium">
                     <div><strong class="text-emerald-700 dark:text-emerald-300">0</strong> trips/wk</div>
-                    <div class="text-[9px] text-emerald-500 font-normal">(~0 /day • 6 days)</div>
+                    <div class="text-[9px] text-emerald-500 font-normal">(~0 trips/day • 6 days)</div>
                   </div>
                 </div>
               </div>
@@ -213,7 +213,7 @@
                   </div>
                   <div id="kpi-carrier-total-trips" class="mt-2 text-[10px] space-y-0.5 text-slate-500 dark:text-slate-400 font-medium">
                     <div><strong class="text-slate-700 dark:text-slate-200">0</strong> trips/wk</div>
-                    <div class="text-[9px] text-slate-400 font-normal">(~0 /day)</div>
+                    <div class="text-[9px] text-slate-400 font-normal">(~0 trips/day)</div>
                   </div>
                 </div>
 
@@ -229,7 +229,7 @@
                   </div>
                   <div id="kpi-carrier-unavail-trips" class="mt-2 text-[10px] space-y-0.5 text-rose-600 dark:text-rose-400 font-medium">
                     <div><strong class="text-rose-700 dark:text-rose-300">0</strong> trips/wk</div>
-                    <div class="text-[9px] text-rose-500 font-normal">(~0 /day)</div>
+                    <div class="text-[9px] text-rose-500 font-normal">(~0 trips/day)</div>
                   </div>
                 </div>
 
@@ -245,7 +245,7 @@
                   </div>
                   <div id="kpi-carrier-avail-trips" class="mt-2 text-[10px] space-y-0.5 text-emerald-600 dark:text-emerald-400 font-medium">
                     <div><strong class="text-emerald-700 dark:text-emerald-300">0</strong> trips/wk</div>
-                    <div class="text-[9px] text-emerald-500 font-normal">(~0 /day)</div>
+                    <div class="text-[9px] text-emerald-500 font-normal">(~0 trips/day)</div>
                   </div>
                 </div>
               </div>
@@ -258,30 +258,46 @@
           <!-- ========================================================= -->
           <div class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-4 font-sans">
             
-            <!-- Header -->
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <!-- Header พร้อมจัดวาง Searchable Multi-Select Dropdown ฝั่งขวา -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3 font-sans">
               <div>
                 <h3 class="text-sm font-extrabold text-slate-800 dark:text-white flex items-center gap-2 font-sans">
                   <i data-lucide="map-pin" class="w-4 h-4 text-orange-500"></i> Available Backhaul Routes by Region
                 </h3>
-                <p class="text-[11px] font-medium text-slate-500 dark:text-slate-400 font-sans">Click on any region card to drill down into lane-level capacity</p>
+                <p class="text-[11px] font-medium text-slate-500 dark:text-slate-400 font-sans">
+                  Filter by province or click on any region card to drill down into lane-level capacity
+                </p>
+              </div>
+
+              <!-- Custom Searchable Multi-Select Dropdown -->
+              <div class="custom-select-container relative min-w-[240px] sm:w-64 shrink-0">
+                <label class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">Destination Province</label>
+                <button type="button" onclick="toggleCustomDropdown('dropdown-exec-province')" 
+                  class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold border border-orange-500 bg-white dark:bg-zinc-950 text-slate-800 dark:text-slate-100 shadow-sm hover:border-orange-600 transition-all font-sans cursor-pointer">
+                  <span id="label-exec-province" class="truncate font-semibold text-slate-700 dark:text-slate-200">All Provinces</span>
+                  <i data-lucide="chevron-down" class="w-4 h-4 text-slate-400 shrink-0 ml-2"></i>
+                </button>
+
+                <!-- Dropdown Popup Menu -->
+                <div id="dropdown-exec-province" class="custom-select-dropdown hidden absolute right-0 top-full mt-1.5 w-64 p-2 bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl z-50 font-sans">
+                  <!-- ข้อมูล Search และ Checkboxes จะถูกสร้างผ่าน JavaScript -->
+                </div>
               </div>
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 font-sans">
-              <!-- รายการการ์ดสรุปราย Zone (5 Columns) -->
+              <!-- รายการการ์ดสรุปราย Zone คงเดิม (5 Columns) -->
               <div id="exec-region-summary-list" class="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2.5 overflow-y-auto max-h-[340px] custom-scrollbar pr-1 font-sans">
                 <div class="p-4 text-center text-xs text-slate-400 col-span-full font-sans">Loading Available Backhaul data by region...</div>
               </div>
 
-              <!-- แผนที่ Heatmap (7 Columns) -->
+              <!-- แผนที่ Heatmap คงเดิม (7 Columns) -->
               <div class="lg:col-span-7 h-[340px] rounded-2xl border border-slate-200 dark:border-slate-800 relative overflow-hidden shadow-inner font-sans">
                 <!-- Map Canvas -->
                 <div id="map-exec-heatmap" class="w-full h-full z-0"></div>
 
-                <!-- 💡 การ์ด Legend ลอยบน Map (Bottom-Left Glassmorphism Card) -->
+                <!-- การ์ด Legend ลอยบน Map (Bottom-Left) -->
                 <div class="absolute bottom-2.5 left-2.5 z-[400] bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md p-2.5 px-3 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xl font-sans min-w-[170px] pointer-events-auto">
-                  <!-- Legend Header -->
                   <div class="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800">
                     <div class="flex items-center gap-1.5">
                       <span class="w-1.5 h-1.5 rounded-full bg-orange-500 ring-2 ring-orange-500/20"></span>
@@ -290,9 +306,7 @@
                     <span class="text-[9px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Avail %</span>
                   </div>
 
-                  <!-- Legend Rows -->
                   <div class="space-y-1 text-[10px]">
-                    <!-- High -->
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-emerald-500 shadow-sm shrink-0"></span>
@@ -301,7 +315,6 @@
                       <span class="font-black text-emerald-600 dark:text-emerald-400">71 - 100%</span>
                     </div>
 
-                    <!-- Moderate -->
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-amber-500 shadow-sm shrink-0"></span>
@@ -310,7 +323,6 @@
                       <span class="font-black text-amber-500 dark:text-amber-400">31 - 70%</span>
                     </div>
 
-                    <!-- Low -->
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-rose-500 shadow-sm shrink-0"></span>
@@ -319,7 +331,6 @@
                       <span class="font-black text-rose-500 dark:text-rose-400">1 - 30%</span>
                     </div>
 
-                    <!-- Unavailable -->
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-1.5">
                         <span class="w-2 h-2 rounded-full bg-[#334155] shadow-sm shrink-0"></span>
@@ -330,7 +341,7 @@
                   </div>
                 </div>
 
-                <!-- Badge แสดงสถานะมุมขวาล่าง -->
+                <!-- Status Badge (Bottom-Right) -->
                 <div class="absolute bottom-2.5 right-2.5 px-3 py-1.5 rounded-full text-[10px] font-bold backdrop-blur-md bg-white/90 dark:bg-zinc-900/90 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 z-[400] shadow-sm flex items-center gap-1.5 font-sans">
                   <i data-lucide="flame" class="w-3.5 h-3.5 text-orange-500"></i>
                   <span class="font-sans">Available Backhaul Heatmap</span>
@@ -506,6 +517,49 @@
                         <option value="density">🔥Trip Density</option>
                       </select>
                     </div>
+
+                    <!-- 💡 ช่องกรอกช่วง % Available Backhaul (Min - Max) -->
+                    <div>
+                      <label class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1.5">AVAILABLE BACKHAUL RANGE (%)</label>
+                      <div class="flex items-center gap-2">
+                        <div class="relative flex-1">
+                          <input 
+                            type="number" 
+                            id="filter-backhaul-min" 
+                            min="0" 
+                            max="100" 
+                            placeholder="Min % (0)" 
+                            oninput="applyDynamicFilters()"
+                            class="w-full p-2.5 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-800 dark:bg-zinc-950 dark:border-slate-700 dark:text-white outline-none focus:border-orange-500 transition-colors text-center shadow-sm placeholder:text-slate-400 placeholder:font-normal font-sans" />
+                        </div>
+                        <span class="text-xs text-slate-400 font-bold">-</span>
+                        <div class="relative flex-1">
+                          <input 
+                            type="number" 
+                            id="filter-backhaul-max" 
+                            min="0" 
+                            max="100" 
+                            placeholder="Max % (100)" 
+                            oninput="applyDynamicFilters()"
+                            class="w-full p-2.5 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-800 dark:bg-zinc-950 dark:border-slate-700 dark:text-white outline-none focus:border-orange-500 transition-colors text-center shadow-sm placeholder:text-slate-400 placeholder:font-normal font-sans" />
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">
+                          Show only available trip more than
+                      </label>
+                      <div class="relative">
+                        <input 
+                          type="number" 
+                          id="filter-min-avail-trips" 
+                          min="0" 
+                          step="0.5" 
+                          placeholder="Min Trips/Wk (0)" 
+                          oninput="applyDynamicFilters()" 
+                          class="w-full p-2.5 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-800 dark:bg-zinc-950 dark:border-slate-700 dark:text-white outline-none focus:border-orange-500 transition-colors shadow-sm placeholder:text-slate-400 placeholder:font-normal font-sans" />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -540,7 +594,7 @@
                       <div id="dropdown-filter-truck-type" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
                     </div>
 
-                    <!-- Available Backhaul Range (%) Filter -->
+                    <!-- Available Backhaul Range (%) Filter
                     <div>
                       <div class="flex justify-between items-center mb-1">
                         <label class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Available Backhaul (%)</label>
@@ -550,12 +604,12 @@
                         <input type="number" id="filter-backhaul-min" min="0" max="100" placeholder="Min % (0)" class="w-full p-2 rounded-xl text-xs border bg-white border-slate-200 text-slate-800 dark:bg-zinc-950 dark:border-slate-700 dark:text-white outline-none focus:border-orange-500 transition-colors">
                         <input type="number" id="filter-backhaul-max" min="0" max="100" placeholder="Max % (100)" class="w-full p-2 rounded-xl text-xs border bg-white border-slate-200 text-slate-800 dark:bg-zinc-950 dark:border-slate-700 dark:text-white outline-none focus:border-orange-500 transition-colors">
                       </div>
-                    </div>
+                    </div> -->
                   </div>
                 </div>
 
                 <!-- Origin Section (Collapsed) -->
-                <div class="mb-2">
+                <div class="mb-2 font-sans">
                   <div class="filter-accordion-toggle flex justify-between items-center py-2 cursor-pointer select-none" data-target="filter-origin">
                     <div class="flex items-center gap-2">
                       <i data-lucide="map-pin" class="w-3.5 h-3.5 text-emerald-500"></i>
@@ -563,14 +617,39 @@
                     </div>
                     <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 accordion-chevron"></i>
                   </div>
-                  <div id="filter-origin" class="filter-accordion-content hidden p-3 rounded-xl border border-dashed mt-1 space-y-3 bg-slate-50/50 border-slate-300 dark:bg-slate-800/20 dark:border-slate-700">
+
+                  <div id="filter-origin" class="filter-accordion-content hidden p-3 rounded-xl border border-dashed mt-1 space-y-2.5 bg-slate-50/50 border-slate-300 dark:bg-slate-800/20 dark:border-slate-700">
+                    
+                    <!-- 1. Origin Zone Dropdown -->
                     <div class="flex flex-col custom-select-container relative">
+                      <label class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">Origin Zone</label>
+                      <button type="button" onclick="toggleCustomDropdown('dropdown-filter-origin-zone')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                        <span id="label-filter-origin-zone" data-default="All Origin Zones" class="truncate text-slate-500 dark:text-slate-400">All Origin Zones</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                      </button>
+                      <div id="dropdown-filter-origin-zone" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                    </div>
+
+                    <!-- 2. Origin Province Dropdown
+                    <div class="flex flex-col custom-select-container relative">
+                      <label class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">Origin Province</label>
                       <button type="button" onclick="toggleCustomDropdown('dropdown-filter-origin-province')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
-                        <span id="label-filter-origin-province" data-default="All Origin DCs" class="truncate text-slate-500 dark:text-slate-400">All Origin DCs</span>
+                        <span id="label-filter-origin-province" data-default="All Origin Provinces" class="truncate text-slate-500 dark:text-slate-400">All Origin Provinces</span>
                         <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
                       </button>
                       <div id="dropdown-filter-origin-province" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
+                    </div> -->
+
+                    <!-- 3. Origin DC / Plant Dropdown -->
+                    <div class="flex flex-col custom-select-container relative">
+                      <label class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">Origin Plant / DC</label>
+                      <button type="button" onclick="toggleCustomDropdown('dropdown-filter-origin-dc')" class="w-full p-2.5 rounded-xl text-xs border outline-none bg-white border-slate-200 flex justify-between items-center dark:bg-zinc-950 dark:border-slate-700 shadow-sm hover:border-orange-500 transition-colors">
+                        <span id="label-filter-origin-dc" data-default="All Origin DCs" class="truncate text-slate-500 dark:text-slate-400">All Origin DCs</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 pointer-events-none"></i>
+                      </button>
+                      <div id="dropdown-filter-origin-dc" class="custom-select-dropdown hidden absolute z-[500] top-full left-0 w-full mt-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-52 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5"></div>
                     </div>
+
                   </div>
                 </div>
 
@@ -733,13 +812,39 @@
           </div>
 
           <!-- Data Table (Bottom) -->
-          <div id="table-container" class="absolute bottom-0 left-0 w-full z-20 flex flex-col table-expanded">
+          <div id="table-container" class="absolute bottom-0 left-0 w-full z-20 flex flex-col table-expanded font-sans">
             <div class="flex justify-center -mb-px">
-              <button id="toggle-table" class="px-6 py-1.5 rounded-t-xl border-t border-x backdrop-blur-xl flex items-center gap-2 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.3)] bg-white/95 border-slate-300 text-slate-600 hover:text-slate-900 dark:bg-zinc-900/95 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">
-                <span class="text-[10px] font-bold uppercase">DATA (<span id="ops-count">0</span>)</span>
-                <i data-lucide="chevron-down" class="w-3.5 h-3.5" id="table-chevron"></i>
+              <button id="toggle-table" class="px-5 py-1.5 rounded-t-2xl border-t border-x backdrop-blur-xl flex items-center gap-3 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.2)] bg-white/95 border-slate-300 text-slate-700 hover:text-slate-900 dark:bg-zinc-900/95 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white font-sans transition-all cursor-pointer">
+                
+                <!-- 1. จำนวนเส้นทาง (Route Groups) -->
+                <div class="flex items-center gap-1.5">
+                  <i data-lucide="table" class="w-3.5 h-3.5 text-orange-500"></i>
+                  <span class="text-[10px] font-extrabold tracking-wider uppercase">DATA (<span id="ops-count" class="text-orange-600 dark:text-orange-400">0</span>)</span>
+                </div>
+
+                <span class="text-slate-300 dark:text-slate-700 text-xs">|</span>
+
+                <!-- 2. ยอดรวม Sum Trip/Week -->
+                <div class="flex items-center gap-1 text-[10px] font-medium text-slate-500 dark:text-slate-400 font-Sarabun">
+                  <span>Total:</span>
+                  <strong id="ops-sum-trips" class="text-slate-800 dark:text-slate-200 font-bold">0</strong>
+                  <span class="text-[9px]">trips/wk</span>
+                </div>
+
+                <span class="text-slate-300 dark:text-slate-700 text-xs">|</span>
+
+                <!-- 3. ยอดรวม Available Backhaul (Trips & %) -->
+                <div class="flex items-center gap-1.5 text-[10px] font-medium text-slate-500 dark:text-slate-400 font-Sarabun">
+                  <span>Available Backhaul:</span>
+                  <strong id="ops-avail-trips" class="text-emerald-600 dark:text-emerald-400 font-extrabold">0</strong>
+                  <span class="text-[9px]">trips/wk</span>
+                  <span id="ops-avail-pct" class="text-[9px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">(0.0%)</span>
+                </div>
+
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 transition-transform ml-1" id="table-chevron"></i>
               </button>
             </div>
+
             <div class="h-64 border-t backdrop-blur-xl shadow-2xl flex flex-col bg-white/95 border-slate-300 dark:bg-zinc-900/95 dark:border-slate-700">
               <div class="flex-1 overflow-auto custom-scrollbar p-0">
                 <table class="w-full text-left border-collapse min-w-max">
