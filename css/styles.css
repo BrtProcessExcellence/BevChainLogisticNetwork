@@ -1,72 +1,227 @@
-@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;700;900&display=swap');
+/**
+ * ==============================================================================
+ * BEVCHAIN LOGISTICS NETWORK - MASTER STYLESHEET (css/style.css)
+ * ==============================================================================
+ */
 
-body { 
-  font-family: 'Sarabun', sans-serif; 
+/* ==============================================================================
+   1. IMPORTS & CSS VARIABLES
+   ============================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800;900&display=swap');
+
+:root {
+  --font-main: 'Sarabun', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --color-primary: #f97316;
+  --color-primary-dark: #ea580c;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-unavailable: #334155;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-dark: #334155;
 }
 
-.leaflet-container { 
-  background: transparent !important; 
+/* ==============================================================================
+   2. BASE & RESET STYLES
+   ============================================================================== */
+html, body {
+  font-family: var(--font-main);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-@keyframes flow-move { 
-  from { stroke-dashoffset: 25; } 
-  to { stroke-dashoffset: 0; } 
+.leaflet-container {
+  background: transparent !important;
 }
 
-.flow-line { 
-  animation: flow-move 2s linear infinite; 
+/* ==============================================================================
+   3. KEYFRAME ANIMATIONS
+   ============================================================================== */
+/* Slide-Up Transition */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.flow-line-fast { 
-  animation: flow-move 1s linear infinite; 
+.animate-slide-up {
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-@keyframes slide-up { 
-  from { opacity: 0; transform: translateY(10px); } 
-  to { opacity: 1; transform: translateY(0); } 
+/* Animated Route Flow Lines */
+@keyframes flow-move {
+  from {
+    stroke-dashoffset: 25;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
-.animate-slide-up { 
-  animation: slide-up 0.3s ease-out forwards; 
+.flow-line {
+  animation: flow-move 2s linear infinite;
 }
 
-.custom-scrollbar::-webkit-scrollbar { 
-  width: 6px; 
-  height: 6px; 
+.flow-line-fast {
+  animation: flow-move 1s linear infinite;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track { 
-  background: transparent; 
+/* Node Pin Pulse Effect */
+@keyframes pulseGlow {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7);
+  }
+  70% {
+    transform: scale(1.3);
+    box-shadow: 0 0 0 6px rgba(249, 115, 22, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0);
+  }
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb { 
-  background: #cbd5e1; 
-  border-radius: 10px; 
+.node-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: pulseGlow 1.8s infinite;
 }
 
-.dark .custom-scrollbar::-webkit-scrollbar-thumb { 
-  background: #334155; 
+/* ==============================================================================
+   4. LAYOUT & UTILITY COMPONENTS
+   ============================================================================== */
+.view-mapping-panel {
+  display: none !important;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { 
-  background: #f97316; 
+/* Ambient Glow for Login Card */
+.login-glow-bg {
+  position: absolute;
+  top: -2.5rem;
+  right: -2.5rem;
+  width: 8rem;
+  height: 8rem;
+  background-color: rgba(249, 115, 22, 0.2);
+  border-radius: 9999px;
+  filter: blur(48px);
+  pointer-events: none;
 }
 
-/* Leaflet Tooltip Customization */
+/* ==============================================================================
+   5. TABLE ACCORDION & TRANSITIONS
+   ============================================================================== */
+#table-container {
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.table-hidden {
+  transform: translateY(calc(100% - 40px));
+}
+
+.table-expanded {
+  transform: translateY(0);
+}
+
+/* Dynamic Accordion Sub-tables */
+.accordion-detail {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease-in-out;
+}
+
+.accordion-detail.expanded {
+  opacity: 1;
+}
+
+/* ==============================================================================
+   6. CUSTOM SCROLLBAR
+   ============================================================================== */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb-dark);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-primary);
+}
+
+/* ==============================================================================
+   7. LEAFLET MAP MARKERS, BADGES & TOOLTIPS
+   ============================================================================== */
+/* Hub Badges & Node Markers */
+.custom-hub-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.hub-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hub-badge:hover {
+  transform: scale(1.1) translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.hub-badge-plant {
+  background: #0f172a;
+  color: #ffffff;
+  border: 2px solid var(--color-primary);
+}
+
+.hub-badge-shipto {
+  background: #ffffff;
+  color: #0f172a;
+  border: 2px solid #3b82f6;
+}
+
+/* Tooltip Customization (Glassmorphism & Theme Sync) */
 .leaflet-tooltip.custom-leaflet-tooltip {
   background: rgba(255, 255, 255, 0.95) !important;
   border: 1px solid #e2e8f0 !important;
-  border-radius: 0.5rem !important;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
   color: #1e293b !important;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
   white-space: normal !important;
+  font-family: var(--font-main);
 }
 
 .dark .leaflet-tooltip.custom-leaflet-tooltip {
-  background: rgba(30, 41, 59, 0.95) !important;
-  border-color: #334155 !important;
-  color: #f8fafc !important;
+  background: rgba(24, 24, 27, 0.95) !important;
+  border-color: #3f3f46 !important;
+  color: #f4f4f5 !important;
 }
 
 .leaflet-tooltip-top.custom-leaflet-tooltip::before {
@@ -74,74 +229,5 @@ body {
 }
 
 .dark .leaflet-tooltip-top.custom-leaflet-tooltip::before {
-  border-top-color: rgba(30, 41, 59, 0.95) !important;
-}
-
-/* Table transitions */
-#table-container { 
-  transition: transform 0.5s ease-in-out; 
-}
-
-.table-hidden { 
-  transform: translateY(calc(100% - 40px)); 
-}
-
-.table-expanded { 
-  transform: translateY(0); 
-}
-
-  /* Custom Leaflet Hub Markers & Route Glow */
-  .custom-hub-marker {
-    background: transparent !important;
-    border: none !important;
-  }
-  .hub-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 8px;
-    border-radius: 9999px;
-    font-size: 10px;
-    font-weight: 800;
-    white-space: nowrap;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.2);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-  .hub-badge:hover {
-    transform: scale(1.1) translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-  }
-  .hub-badge-plant {
-    background: #0f172a;
-    color: #ffffff;
-    border: 2px solid #f97316;
-  }
-  .hub-badge-shipto {
-    background: #ffffff;
-    color: #0f172a;
-    border: 2px solid #3b82f6;
-  }
-  
-  /* Modern Pulse Effect on Node Pins */
-  .node-pulse-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    animation: pulseGlow 1.8s infinite;
-  }
-  @keyframes pulseGlow {
-    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7); }
-    70% { transform: scale(1.3); box-shadow: 0 0 0 6px rgba(249, 115, 22, 0); }
-    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
-  }
-/* ควบคุมการยืดหดแบบไดนามิก */
-.accordion-detail {
-  max-height: 0;
-  overflow: hidden;
-  opacity: 0;
-  transition: max-height 0.3s ease-in-out, opacity 0.25s ease-in-out;
-}
-
-.accordion-detail.expanded {
-  opacity: 1;
+  border-top-color: rgba(24, 24, 27, 0.95) !important;
 }

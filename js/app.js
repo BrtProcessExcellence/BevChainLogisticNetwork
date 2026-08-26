@@ -308,7 +308,7 @@ async function updateExecutiveDashboard(filteredData = []) {
         ? window.globalRouteSheetData
         : (typeof fetchNewRouteSheet === 'function' ? await fetchNewRouteSheet() : []));
 
-  window.globalRouteSheetData = Array.isArray(routeData) ? routeData : [];
+  window.globalRouteSheetData = Array.isArray(routeData) ? (routeData[0]?._parsed ? routeData : precomputeRouteData(routeData)) : [];
 
   if (typeof populateExecProvinceMultiSelect === 'function') {
     populateExecProvinceMultiSelect(window.globalRouteSheetData);
@@ -510,10 +510,10 @@ function renderExecZoneSummaryList(zoneSummaryMap) {
     .sort((a, b) => b.zoneAvailPct !== a.zoneAvailPct ? b.zoneAvailPct - a.zoneAvailPct : b.availRoutes - a.availRoutes);
 
   regionListEl.innerHTML = sortedZones.map(item => `
-    <div onclick="drillDownExecZone('${escapeAttr(item.zoneName)}')" class="p-3 rounded-2xl bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-slate-800 hover:border-orange-500 cursor-pointer transition-all flex items-center justify-between font-sans">
+    <div onclick="selectExecZoneCard('${escapeAttr(item.zoneName)}', this)" class="p-3.5 rounded-2xl bg-white dark:bg-zinc-950 border border-slate-200/90 dark:border-slate-800 hover:border-orange-500 cursor-pointer transition-all flex items-center justify-between font-sans shadow-sm hover:scale-[1.01]">
       <div>
         <h5 class="text-xs font-extrabold text-slate-800 dark:text-white">${escapeHtml(item.zoneName)}</h5>
-        <p class="text-[10px] text-slate-400">
+        <p class="text-[10px] text-slate-400 mt-0.5">
           ${item.totalRoutes.toLocaleString()} routes (${Math.round(item.totalTrips).toLocaleString()} trips/wk • ~${(item.totalTrips / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)
         </p>
       </div>
@@ -521,7 +521,7 @@ function renderExecZoneSummaryList(zoneSummaryMap) {
         <div class="text-xs font-black text-emerald-600 dark:text-emerald-400">
            ${item.availRoutes.toLocaleString()} routes <span class="text-[10px]">(${item.zoneAvailPct.toFixed(2)}%)</span>
         </div>
-        <p class="text-[9px] text-slate-400">~${Math.round(item.availTrips).toLocaleString()} trips/wk (~${(item.availTrips / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</p>
+        <p class="text-[10px] text-slate-400 mt-0.5">~${Math.round(item.availTrips).toLocaleString()} trips/wk (~${(item.availTrips / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</p>
       </div>
     </div>
   `).join('');
@@ -889,7 +889,6 @@ function populateDashboardFilters(data) {
   const uniqueOriginZones = [...new Set(originLocations.map(l => l.zone).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
   const uniqueOriginProvinces = [...new Set(originLocations.map(l => l.province).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
 
-  // 💡 แก้ไขจุด Overwrite: เซ็ตค่าแต่ละ Dropdown เพียงครั้งเดียวอย่างถูกต้อง
   updateSelectOptions('filter-origin-zone', uniqueOriginZones, 'All Origin Zones');
   updateSelectOptions('filter-origin-province', uniqueOriginProvinces, 'All Origin Provinces');
   updateSelectOptions('filter-origin-dc', getUniqueValues('origin', 'ต้นทาง'), 'All Origin DCs');
@@ -1131,60 +1130,92 @@ function groupRouteData(filteredData = []) {
 function renderTable(filteredData = []) {
   const thead = document.getElementById('table-head');
   const tbody = document.getElementById('table-body');
-  const opsEl = document.getElementById('ops-count');
-  const opsSumTripsEl = document.getElementById('ops-sum-trips');
-  const opsAvailTripsEl = document.getElementById('ops-avail-trips');
-  const opsAvailPctEl = document.getElementById('ops-avail-pct');
   const paginationEl = document.getElementById('table-pagination');
+
+  // ฟังก์ชันช่วยอัปเดตข้อความลง DOM (รองรับ fallback หลายชื่อ ID)
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = text;
+  };
 
   if (!thead || !tbody) return;
   currentFilteredData = filteredData;
   const groupedRoutes = groupRouteData(filteredData);
   const routeKeys = Object.keys(groupedRoutes);
 
+  // กรณีไม่มีข้อมูลตรงตาม Filter
   if (!filteredData || filteredData.length === 0 || routeKeys.length === 0) {
     tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-500 font-sans">ไม่พบข้อมูล Route ตามเงื่อนไขตัวกรอง</td></tr>`;
-    if (opsEl) opsEl.innerText = '0';
-    if (opsSumTripsEl) opsSumTripsEl.innerText = '0';
-    if (opsAvailTripsEl) opsAvailTripsEl.innerText = '0';
-    if (opsAvailPctEl) opsAvailPctEl.innerText = '(0.0%)';
+    setText('ops-count', '0');
+    setText('ops-avail-groups', '0');
+    setText('ops-unavail-groups', '0');
+    setText('ops-avail-pct', '0.0%');
+    setText('ops-total-volume', '0');
+    setText('ops-sum-trips', '0');
+    setText('ops-avail-volume', '0');
+    setText('ops-avail-trips', '0');
     if (paginationEl) paginationEl.innerHTML = '';
     return;
   }
 
+  // 💡 คำนวณ Group Count, Total Trips และ Available Trips รวมทั้งหมด
   let totalTripsSum = 0;
   let totalAvailTripsSum = 0;
   let availRouteGroupsCount = 0;
+  let unavailRouteGroupsCount = 0;
 
   routeKeys.forEach(key => {
     const grp = groupedRoutes[key];
-    totalTripsSum += grp.totalTrips;
-    totalAvailTripsSum += grp.totalAvailTrips;
+    totalTripsSum += (grp.totalTrips || 0);
+    totalAvailTripsSum += (grp.totalAvailTrips || 0);
 
     if (grp.availablePct > 0) {
       availRouteGroupsCount += 1;
+    } else {
+      unavailRouteGroupsCount += 1;
     }
   });
 
   const totalRouteGroups = routeKeys.length;
-  const execStyleAvailPct = totalRouteGroups > 0 
-    ? ((availRouteGroupsCount / totalRouteGroups) * 100) 
-    : 0;
+  const availPct = totalRouteGroups > 0 ? ((availRouteGroupsCount / totalRouteGroups) * 100).toFixed(1) : '0.0';
 
+  // เรียงลำดับจาก % ว่างมากไปน้อย (และตามด้วยเที่ยวว่าง)
   routeKeys.sort((a, b) => {
-    if (groupedRoutes[b].availablePct !== groupedRoutes[a].availablePct) {
-      return groupedRoutes[b].availablePct - groupedRoutes[a].availablePct;
+    const availA = Number(groupedRoutes[a]?.availablePct || 0);
+    const availB = Number(groupedRoutes[b]?.availablePct || 0);
+    if (availB !== availA) {
+      return availB - availA;
     }
-    return groupedRoutes[b].totalAvailTrips - groupedRoutes[a].totalAvailTrips;
+    const tripsA = Number(groupedRoutes[a]?.totalAvailTrips || 0);
+    const tripsB = Number(groupedRoutes[b]?.totalAvailTrips || 0);
+    return tripsB - tripsA;
   });
 
   window.currentGroupKeys = routeKeys;
   window.currentGroupMap = groupedRoutes;
 
-  if (opsEl) opsEl.innerText = totalRouteGroups.toLocaleString();
-  if (opsSumTripsEl) opsSumTripsEl.innerText = Math.round(totalTripsSum).toLocaleString();
-  if (opsAvailTripsEl) opsAvailTripsEl.innerText = formatNum(totalAvailTripsSum, 1);
-  if (opsAvailPctEl) opsAvailPctEl.innerText = `(${execStyleAvailPct.toFixed(2)}%)`;
+  // 💡 อัปเดตสถิติบนแถบหัวตารางครบทุกค่า
+  setText('ops-count', totalRouteGroups.toLocaleString());
+  setText('ops-avail-groups', availRouteGroupsCount.toLocaleString());
+  setText('ops-unavail-groups', unavailRouteGroupsCount.toLocaleString());
+  setText('ops-avail-pct', `${availPct}%`);
+
+  // อัปเดต Total Volume
+  const formattedTotalVolume = Math.round(totalTripsSum).toLocaleString();
+  setText('ops-total-volume', formattedTotalVolume);
+  setText('ops-sum-trips', formattedTotalVolume);
+
+  // อัปเดต Available Volume
+  const formattedAvailVolume = formatNum(totalAvailTripsSum, 1);
+  setText('ops-avail-volume', formattedAvailVolume);
+  setText('ops-avail-trips', formattedAvailVolume);
+
+  const columns = ['', 'Route', 'Customer (Type) & Item (Type)', 'Truck (Type)', 'Carriers', 'Sum Trip/Week', 'Available Backhaul'];
+  thead.innerHTML = `
+    <tr class="text-[10px] uppercase tracking-wider border-b text-slate-500 border-slate-200 dark:text-slate-400 dark:border-slate-700 bg-slate-50/60 dark:bg-zinc-900/60 font-sans">
+      ${columns.map((col, i) => `<th class="p-3 font-bold ${i === 0 ? 'w-10 text-center' : ''}">${col}</th>`).join('')}
+    </tr>
+  `;
 
   const totalPages = Math.ceil(routeKeys.length / PAGE_SIZE);
   if (currentPage > totalPages) currentPage = 1;
@@ -1358,7 +1389,7 @@ window.focusTableRowByMapKey = function(mapKey) {
     tc.classList.add('table-expanded');
     if (chevron && typeof lucide !== 'undefined') {
       chevron.setAttribute('data-lucide', 'chevron-down');
-      lucide.createIcons();
+      lucide.createIcons({ root: chevron.parentElement });
     }
   }
 
@@ -1426,7 +1457,7 @@ window.filterTableByOrigin = function(originName) {
     tc.classList.add('table-expanded');
     if (chevron && typeof lucide !== 'undefined') {
       chevron.setAttribute('data-lucide', 'chevron-down');
-      lucide.createIcons();
+      lucide.createIcons({ root: chevron.parentElement });
     }
   }
 
@@ -1504,12 +1535,15 @@ window.toggleRouteDetail = function(routeId) {
 };
 
 // ==============================================================================
-// 7. ZONE DRILLDOWN & DETAIL TABLE CONTROLLER (PROVINCE FILTER SYNCED)
+// 7. ZONE DRILLDOWN & DETAIL TABLE CONTROLLER (PROVINCE FILTER SYNCED & SORTED)
 // ==============================================================================
-
 function getExecFilteredRoutes() {
-  const allRoutes = window.globalRouteSheetData || [];
+  let allRoutes = window.globalRouteSheetData || [];
   if (!allRoutes || allRoutes.length === 0) return [];
+  if (!allRoutes[0]?._parsed) {
+    allRoutes = precomputeRouteData(allRoutes);
+    window.globalRouteSheetData = allRoutes;
+  }
 
   const selectedProvinces = (typeof getMultiSelectValues === 'function') 
     ? getMultiSelectValues('exec-province') 
@@ -1554,6 +1588,32 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
   const matchedRoutes = sourceData.filter(row => {
     const rowZone = row._parsed ? row._parsed.cleanZone : cleanAllSpaces(row.zone || row['Zone'] || '');
     return rowZone === cleanTargetZone || rowZone.includes(cleanTargetZone);
+  });
+
+  // 💡 Sort อย่างแม่นยำ ป้องกัน NaN และเรียงจาก % ว่างมากไปน้อย (100% -> 0%)
+  matchedRoutes.sort((a, b) => {
+    const getAvail = (row) => {
+      if (row._parsed && typeof row._parsed.availPct === 'number' && !isNaN(row._parsed.availPct)) {
+        return row._parsed.availPct;
+      }
+      const total = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+      return Math.max(0, 100 - total);
+    };
+
+    const getTrips = (row) => {
+      if (row._parsed && typeof row._parsed.trips === 'number' && !isNaN(row._parsed.trips)) {
+        return row._parsed.trips;
+      }
+      return parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    };
+
+    const availA = getAvail(a);
+    const availB = getAvail(b);
+    if (availB !== availA) return availB - availA;
+
+    const tripsA = getTrips(a);
+    const tripsB = getTrips(b);
+    return tripsB - tripsA;
   });
 
   if (titleEl) titleEl.innerText = zoneName;
@@ -1603,6 +1663,8 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
 
   if (typeof lucide !== 'undefined') lucide.createIcons({ root: panel });
 }
+
+window.showExecZoneDetailsTable = showExecZoneDetailsTable;
 
 window.closeExecZoneDetailTable = function() {
   const panel = document.getElementById('exec-zone-detail-panel');
@@ -1994,7 +2056,7 @@ window.exportFilteredDataToCSV = function() {
     const p = row._parsed;
     const avgTrip = p ? p.trips : parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
     const totalPct = p ? p.totalPct : parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
-    const availPct = p ? p.availPct : Math.max(0, 100 - totalPct);
+    const availPct = Math.max(0, 100 - totalPct);
     const availTrips = (avgTrip * (availPct / 100)).toFixed(2);
 
     const values = [
@@ -2035,7 +2097,45 @@ window.exportFilteredDataToCSV = function() {
 };
 
 function setupEventListeners() {
-  
+  document.getElementById('btn-login-ms')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-login-ms');
+  const loginScreen = document.getElementById('login-screen');
+  const app = document.getElementById('main-app');
+
+  if (btn) {
+    btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 shrink-0 animate-spin text-orange-500"></i> <span>Authenticating...</span>`;
+    if (typeof lucide !== 'undefined') lucide.createIcons({ root: btn });
+  }
+
+  if (loginScreen) {
+    loginScreen.classList.add('opacity-0', 'pointer-events-none');
+    setTimeout(() => loginScreen.classList.add('hidden'), 500);
+  }
+  if (app) {
+    app.classList.remove('hidden');
+    setTimeout(() => app.classList.remove('opacity-0', 'pointer-events-none'), 50);
+  }
+  await initAppAfterLogin();
+});
+
+// 2. 💡 ปุ่ม Logout (ต้องคืนค่าแท็ก <img> กลับมา ไม่เขียนทับด้วยข้อความเปล่า)
+document.getElementById('btn-logout')?.addEventListener('click', () => {
+  const app = document.getElementById('main-app');
+  const loginScreen = document.getElementById('login-screen');
+  if (app) app.classList.add('hidden', 'opacity-0', 'pointer-events-none');
+  if (loginScreen) loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+
+  const btnLogin = document.getElementById('btn-login-ms');
+  if (btnLogin) {
+    // 💡 คืนรูปภาพไอคอน Microsoft และข้อความกลับมาครบถ้วน
+    btnLogin.innerHTML = `
+      <img src="https://authjs.dev/img/providers/microsoft.svg" alt="Microsoft" class="w-5 h-5 shrink-0 group-hover:scale-110 transition-transform" />
+      <span id="btn-login-ms-text">Sign in with Microsoft</span>
+    `;
+  }
+  showToast('You have successfully logged out.');
+});
+
   const searchInput = document.querySelector('#filters-content input[type="text"]');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
@@ -2044,7 +2144,6 @@ function setupEventListeners() {
     });
   }
 
-  // 💡 แยก Timer สำหรับ Numeric Filters เพื่อไม่ให้รบกวนช่องค้นหา
   const numericFilterIds = ['filter-backhaul-min', 'filter-backhaul-max', 'filter-min-avail-trips'];
   numericFilterIds.forEach(id => {
     const el = document.getElementById(id);

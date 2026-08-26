@@ -1,17 +1,25 @@
 /**
  * ==============================================================================
- * MICROSOFT AZURE AD AUTHENTICATION & SESSION MANAGER (auth.js - FIXED)
+ * MICROSOFT AZURE AD AUTHENTICATION & SESSION MANAGER (auth.js - BULLETPROOF)
  * ==============================================================================
  */
 
+// 1. ดึงหรือสร้าง Supabase Client Instance ที่ถูกต้อง 100%
 function getAuthDbClient() {
-  if (typeof getDbClient === 'function') return getDbClient();
-  return window.supabase || window._supabaseDbInstance || null;
+  if (window._supabaseDbInstance) return window._supabaseDbInstance;
+  if (typeof getDbClient === 'function') {
+    const client = getDbClient();
+    if (client) return client;
+  }
+  const config = typeof CONFIG !== 'undefined' ? CONFIG : null;
+  if (window.supabase && typeof window.supabase.createClient === 'function' && config?.SUPABASE_URL && config?.SUPABASE_KEY) {
+    window._supabaseDbInstance = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_KEY);
+    return window._supabaseDbInstance;
+  }
+  return null;
 }
 
-/**
- * 1. ฟังก์ชันสั่งล็อกอินผ่าน Microsoft Azure AD
- */
+// 2. ฟังก์ชันสั่งล็อกอินผ่าน Microsoft Azure AD
 async function signInWithMicrosoft() {
   const db = getAuthDbClient();
   if (!db) {
@@ -37,14 +45,12 @@ async function signInWithMicrosoft() {
     if (error) throw error;
   } catch (err) {
     console.error('Microsoft Login Error:', err);
-    if (typeof showToast === 'function') showToast('เกิดข้อผิดพลาดในการเข้าสู่ระบบ Microsoft');
+    if (typeof showToast === 'function') showToast(`เกิดข้อผิดพลาด: ${err.message || 'เข้าสู่ระบบไม่สำเร็จ'}`);
     if (btn) btn.innerHTML = `Sign in with Microsoft`;
   }
 }
 
-/**
- * 2. ฟังก์ชันอัปเดตข้อมูลโปรไฟล์บน Sidebar
- */
+// 3. ฟังก์ชันอัปเดตข้อมูลโปรไฟล์ผู้ใช้บน Sidebar
 function updateUserProfileUI(user) {
   if (!user) return;
 
@@ -53,7 +59,7 @@ function updateUserProfileUI(user) {
   const email = user.email || metadata.email || '';
   const department = metadata.department || metadata.job_title || metadata.company_name || 'Transport';
 
-  // คำนวณตัวย่อชื่อ (Initials)
+  // คำนวณตัวย่อชื่อ 2 ตัวอักษร
   let initials = 'MS';
   if (fullName) {
     const parts = fullName.trim().split(/\s+/);
@@ -81,16 +87,14 @@ function updateUserProfileUI(user) {
   }
 }
 
-/**
- * 3. ฟังก์ชันสลับหน้าจอและเริ่มต้นระบบ (บังคับแสดงหน้า Dashboard ทันที)
- */
+// 4. ฟังก์ชันสลับหน้าจอแสดงผลเมื่อ Authenticated
 async function handleUserAuthenticated(user) {
   if (!user) return;
 
   const loginScreen = document.getElementById('login-screen');
   const app = document.getElementById('main-app');
 
-  // 💡 บังคับสลับหน้าจอ UI ทันที ไม่ต้องรอฟังก์ชันอื่น
+  // สลับหน้าจอ UI ทันที
   if (loginScreen) {
     loginScreen.classList.add('hidden', 'opacity-0', 'pointer-events-none');
     loginScreen.style.display = 'none';
@@ -100,26 +104,48 @@ async function handleUserAuthenticated(user) {
     app.style.display = 'flex';
   }
 
-  // อัปเดต Profile บน Sidebar
+  // อัปเดตข้อมูล Sidebar
   try {
     updateUserProfileUI(user);
   } catch (e) {
-    console.error('Error updating profile UI:', e);
+    console.error('Profile UI Error:', e);
   }
 
-  // เริ่มโหลดข้อมูลแอปพลิเคชัน
+  // โหลดข้อมูล Dashboard
   try {
     if (typeof initAppAfterLogin === 'function') {
       await initAppAfterLogin();
     }
   } catch (e) {
-    console.error('Error in initAppAfterLogin:', e);
+    console.error('App Init Error:', e);
+  }
+
+  // ล้าง Query Params / Hash token ออกจาก URL ให้สะอาด
+  if (window.location.search.includes('code=') || window.location.hash.includes('access_token=')) {
+    window.history.replaceState({}, document.title, window.location.pathname);
   }
 }
 
-/**
- * 4. ฟังก์ชันออกจากระบบ
- */
+// 5. ฟังก์ชันแสดงหน้าจอ Login
+function showLoginScreen() {
+  const app = document.getElementById('main-app');
+  const loginScreen = document.getElementById('login-screen');
+  const btn = document.getElementById('btn-login-ms');
+
+  if (app) {
+    app.classList.add('hidden', 'opacity-0', 'pointer-events-none');
+    app.style.display = 'none';
+  }
+  if (loginScreen) {
+    loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+    loginScreen.style.display = 'flex';
+  }
+  if (btn) {
+    btn.innerHTML = `Sign in with Microsoft`;
+  }
+}
+
+// 6. ฟังก์ชันออกจากระบบ
 async function signOutUser() {
   const db = getAuthDbClient();
   if (db) {
@@ -129,57 +155,58 @@ async function signOutUser() {
   window.globalRouteSheetData = [];
   if (typeof currentFilteredData !== 'undefined') currentFilteredData = [];
 
-  const app = document.getElementById('main-app');
-  const loginScreen = document.getElementById('login-screen');
-  
-  if (app) {
-    app.classList.add('hidden', 'opacity-0', 'pointer-events-none');
-    app.style.display = 'none';
-  }
-  if (loginScreen) {
-    loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
-    loginScreen.style.display = 'flex';
-  }
-  
-  const btnLogin = document.getElementById('btn-login-ms');
-  if (btnLogin) btnLogin.innerHTML = `Sign in with Microsoft`;
-
+  showLoginScreen();
   if (typeof showToast === 'function') showToast('ออกจากระบบเรียบร้อยแล้ว');
 }
 
-/**
- * 5. ฟังก์ชัน Session Listener รองรับทั้ง INITIAL_SESSION และ SIGNED_IN
- */
+// 7. ฟังก์ชัน Session Listener รองรับการดักจับ Code และ Error จาก URL
 async function initializeAuthSession() {
   const db = getAuthDbClient();
   if (!db) return;
 
-  // 💡 ดักฟัง Event ทันที ครอบคลุม INITIAL_SESSION, SIGNED_IN, และ TOKEN_REFRESHED
+  // 💡 ตรวจสอบว่ามี Error ส่งกลับมาจาก Microsoft ใน URL หรือไม่
+  const urlParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+  const authError = urlParams.get('error_description') || urlParams.get('error') || hashParams.get('error_description');
+
+  if (authError) {
+    console.error('OAuth Return Error:', authError);
+    if (typeof showToast === 'function') showToast(`⚠️ เข้าสู่ระบบไม่สำเร็จ: ${authError}`);
+    showLoginScreen();
+    window.history.replaceState({}, document.title, window.location.pathname);
+    return;
+  }
+
+  const isOAuthRedirect = window.location.search.includes('code=') || window.location.hash.includes('access_token=');
+  
+  // หากกำลัง Redirect กลับมาพร้อม Token ให้ค้างสถานะ Loading ไว้ก่อน
+  if (isOAuthRedirect) {
+    const btn = document.getElementById('btn-login-ms');
+    if (btn) btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-1.5"></i> กำลังตรวจสอบสิทธิ์...`;
+  }
+
+  // 💡 ดักฟังสถานะ Auth จาก Supabase
   db.auth.onAuthStateChange(async (event, session) => {
-    if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
+    if (session?.user) {
       await handleUserAuthenticated(session.user);
     } else if (event === 'SIGNED_OUT') {
-      const loginScreen = document.getElementById('login-screen');
-      const app = document.getElementById('main-app');
-      if (loginScreen) {
-        loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
-        loginScreen.style.display = 'flex';
-      }
-      if (app) {
-        app.classList.add('hidden', 'opacity-0', 'pointer-events-none');
-        app.style.display = 'none';
-      }
+      showLoginScreen();
+    } else if (!isOAuthRedirect) {
+      showLoginScreen();
     }
   });
 
-  // ตรวจสอบ Session สำรอง
+  // ตรวจสอบ Session ปัจจุบัน (Fallback)
   try {
     const { data: { session } } = await db.auth.getSession();
-    if (session && session.user) {
+    if (session?.user) {
       await handleUserAuthenticated(session.user);
+    } else if (!isOAuthRedirect) {
+      showLoginScreen();
     }
   } catch (err) {
-    console.error('Session Check Error:', err);
+    console.error('Session verification error:', err);
+    showLoginScreen();
   }
 }
 
