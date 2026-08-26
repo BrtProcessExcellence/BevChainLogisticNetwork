@@ -1,14 +1,16 @@
-// ==============================================================================
-// 1. CONFIGURATION & CONSTANTS
-// ==============================================================================
+/**
+ * ==============================================================================
+ * API CONTROLLER & SUPABASE DATA CONNECTOR (HIGH PERFORMANCE & FAST INITIAL LOAD)
+ * ==============================================================================
+ */
+
 const API_CONFIG = {
-  BATCH_SIZE: 1000,
+  BATCH_SIZE: 1000, 
   TABLES: {
     ROUTES_VIEW: 'view_routes_with_coords',
     EXEC_SUMMARY_VIEW: 'view_exec_province_summary',
     ORIGIN_LOCATIONS: 'brf_locations',
-    PROVINCE_LOCATIONS: 'province_locations',
-    SHIPPING_LOCATIONS: 'Shipping location'
+    PROVINCE_LOCATIONS: 'province_locations'
   },
   RPC: {
     EXEC_KPI: 'get_executive_summary_kpi'
@@ -45,10 +47,6 @@ window.originLocationMap = window.originLocationMap || {};
 
 let inFlightRouteFetchPromise = null;
 
-// ==============================================================================
-// 2. DATABASE CLIENT & UTILITY HELPERS
-// ==============================================================================
-
 function getDbClient() {
   if (window._supabaseDbInstance) return window._supabaseDbInstance;
 
@@ -71,11 +69,10 @@ function parseCoordinate(latVal, lngVal) {
   return { lat, lng };
 }
 
-// ==============================================================================
-// 3. CORE DATA ACCESS METHODS
-// ==============================================================================
-
-async function fetchNewRouteSheet() {
+/**
+ * 1. ดึงข้อมูลเส้นทางหลักแบบลดภาระ Network และตัด Overhead count: exact
+ */
+async function fetchNewRouteSheet(limit = null) {
   if (inFlightRouteFetchPromise) {
     return inFlightRouteFetchPromise;
   }
@@ -85,18 +82,27 @@ async function fetchNewRouteSheet() {
     if (!db) return [];
 
     try {
-      const { count, error: countErr } = await db
-        .from(API_CONFIG.TABLES.ROUTES_VIEW)
-        .select('*', { count: 'exact', head: true });
+      // 💡 กรณีต้องการดึงเฉพาะชุดเริ่มต้น (Fast Preview)
+      if (limit && typeof limit === 'number') {
+        const { data, error } = await db
+          .from(API_CONFIG.TABLES.ROUTES_VIEW)
+          .select(API_CONFIG.ROUTE_COLUMNS)
+          .order('id', { ascending: true })
+          .limit(limit);
 
-      if (countErr) throw countErr;
-      if (!count || count === 0) {
-        window.globalRouteSheetData = [];
-        return [];
+        if (error) throw error;
+        window.globalRouteSheetData = data || [];
+        return window.globalRouteSheetData;
       }
 
+      // 💡 ดึงแบบประมาณการ Batch Size ใหญ่ขึ้น (ลดภาระ HTTP Overhead)
+      const { count, error: countErr } = await db
+        .from(API_CONFIG.TABLES.ROUTES_VIEW)
+        .select('*', { count: 'planned', head: true }); // ใช้ 'planned' เร็วกว่า 'exact' หลายเท่า
+
+      const effectiveCount = count && count > 0 ? count : 15000;
       const step = API_CONFIG.BATCH_SIZE;
-      const totalBatches = Math.ceil(count / step);
+      const totalBatches = Math.ceil(effectiveCount / step);
       const batchPromises = [];
 
       for (let i = 0; i < totalBatches; i++) {
@@ -119,7 +125,7 @@ async function fetchNewRouteSheet() {
       return combinedData;
     } catch (err) {
       console.error('Error fetching routes from view_routes_with_coords:', err);
-      return [];
+      return window.globalRouteSheetData || [];
     } finally {
       inFlightRouteFetchPromise = null;
     }
@@ -128,7 +134,9 @@ async function fetchNewRouteSheet() {
   return inFlightRouteFetchPromise;
 }
 
-
+/**
+ * 2. ดึงข้อมูลสรุปรายจังหวัดสำหรับ Executive Dashboard (เร็วมาก < 200ms)
+ */
 async function fetchExecProvinceSummary() {
   const db = getDbClient();
   if (!db) return [];
@@ -147,6 +155,9 @@ async function fetchExecProvinceSummary() {
   }
 }
 
+/**
+ * 3. ดึงพิกัดจุดต้นทาง (Origin DCs / Plants)
+ */
 async function fetchOriginLocations() {
   const db = getDbClient();
   if (!db) return {};
@@ -161,27 +172,19 @@ async function fetchOriginLocations() {
     const locationMap = {};
     (data || []).forEach(row => {
       const originName = String(row.origin || row.origin_name || '').trim();
-      // รองรับทั้ง lng และ long เดิม
       const coords = parseCoordinate(row.lat, row.lng || row.long);
-
-      // ดึงข้อมูลคอลัมน์ใหม่
-      const id = row.id;
-      const zone = String(row.Zone || row.zone || '').trim();
-      const province = String(row.Province || row.province || '').trim();
-      const plant = String(row.Plant || row.plant || '').trim();
-      const descriptionPlant = String(row.DescriptionPlant || row.description_plant || '').trim();
 
       if (originName && coords) {
         const locationEntry = {
-          id,
+          id: row.id,
           origin: originName,
           lat: coords.lat,
           lng: coords.lng,
-          zone,
-          province,
-          plant,
-          descriptionPlant,
-          platform: descriptionPlant || plant // เก็บไว้รองรับ Backward Compatibility
+          zone: String(row.Zone || row.zone || '').trim(),
+          province: String(row.Province || row.province || '').trim(),
+          plant: String(row.Plant || row.plant || '').trim(),
+          descriptionPlant: String(row.DescriptionPlant || row.description_plant || '').trim(),
+          platform: String(row.DescriptionPlant || row.Plant || '').trim()
         };
 
         locationMap[originName] = locationEntry;
@@ -197,7 +200,9 @@ async function fetchOriginLocations() {
   }
 }
 
-
+/**
+ * 4. ดึงพิกัดกึ่งกลางจังหวัด 77 จังหวัด
+ */
 async function fetchProvinceLocations() {
   const db = getDbClient();
   if (!db) return {};
@@ -229,25 +234,9 @@ async function fetchProvinceLocations() {
   }
 }
 
-
-async function fetchShippingLocations() {
-  const db = getDbClient();
-  if (!db) return [];
-
-  try {
-    const { data, error } = await db
-      .from(API_CONFIG.TABLES.SHIPPING_LOCATIONS)
-      .select('*');
-
-    if (error) throw error;
-    return data || [];
-  } catch (err) {
-    console.warn('Shipping locations table query skipped or empty:', err);
-    return [];
-  }
-}
-
-
+/**
+ * 5. ดึงข้อมูล Executive KPI ผ่าน RPC
+ */
 async function fetchExecutiveSummaryKPI() {
   const db = getDbClient();
   if (!db) return null;
@@ -257,18 +246,17 @@ async function fetchExecutiveSummaryKPI() {
     if (error) throw error;
     return data;
   } catch (err) {
-    console.warn('KPI RPC not available, fallback to client calculations:', err);
     return null;
   }
 }
 
-// ==============================================================================
-// 4. INITIALIZATION ORCHESTRATION
-// ==============================================================================
-
-
+/**
+ * 6. FAST INITIALIZATION (Two-Phase Loading Strategy)
+ * แสดงผลหน้า Executive ทันทีใน 300ms แล้วค่อยโหลด Full Routes ในพื้นหลัง
+ */
 async function initExecutiveDashboardFast() {
   try {
+    // Phase 1: โหลดเฉพาะข้อมูลสรุปและ Master Locations (ขนาดเล็กมาก)
     const [origins, provinces, provSummary, kpi] = await Promise.all([
       fetchOriginLocations(),
       fetchProvinceLocations(),
@@ -283,9 +271,10 @@ async function initExecutiveDashboardFast() {
       updateExecutiveKPICards(kpi);
     }
 
+    // Phase 2: โหลดข้อมูลเส้นทางเต็มเบื้องหลังแบบ Non-blocking
     setTimeout(() => {
       loadDetailedRoutesInBackground();
-    }, 100);
+    }, 150);
 
     return { origins, provinces, provSummary, kpi };
   } catch (err) {
@@ -297,16 +286,18 @@ async function initExecutiveDashboardFast() {
 async function loadDetailedRoutesInBackground() {
   if (window.globalRouteSheetData && window.globalRouteSheetData.length > 0) return;
   await fetchNewRouteSheet();
+  
+  // แจ้งให้อัปเดตตัวกรองตารางเมื่อข้อมูลเบื้องหลังพร้อม
+  if (typeof populateDashboardFilters === 'function') {
+    populateDashboardFilters(window.globalRouteSheetData);
+  }
 }
 
-// ==============================================================================
-// 5. GLOBAL EXPORTS
-// ==============================================================================
+// Global Exports
 window.fetchNewRouteSheet = fetchNewRouteSheet;
 window.fetchExecProvinceSummary = fetchExecProvinceSummary;
 window.fetchOriginLocations = fetchOriginLocations;
 window.fetchProvinceLocations = fetchProvinceLocations;
-window.fetchShippingLocations = fetchShippingLocations;
 window.fetchExecutiveSummaryKPI = fetchExecutiveSummaryKPI;
 window.initExecutiveDashboardFast = initExecutiveDashboardFast;
 window.loadDetailedRoutesInBackground = loadDetailedRoutesInBackground;

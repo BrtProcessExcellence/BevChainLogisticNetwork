@@ -1,6 +1,6 @@
 /**
  * ==============================================================================
- * APP CONTROLLER & DASHBOARD ENGINE (CLEAN & REFACTORED)
+ * APP CONTROLLER & DASHBOARD ENGINE (REFACTORED & OPTIMIZED)
  * ==============================================================================
  */
 
@@ -41,7 +41,11 @@ let currentPage = 1;
 let currentSort = { column: null, direction: 'asc' };
 let regionChart = null;
 let shipToLocationMap = {};
+
+// Independent Debounce Timers
 let searchDebounceTimer = null;
+let numericDebounceTimer = null;
+let mapRenderDebounceTimer = null;
 
 // Global Memory Caches
 window.globalRouteSheetData = window.globalRouteSheetData || [];
@@ -86,6 +90,8 @@ function escapeAttr(str) {
 
 function getDistinctKey(row) {
   if (!row) return '';
+  if (row._parsed?.distinctKey) return row._parsed.distinctKey;
+
   const prov = cleanAllSpaces(row['จังหวัด'] || row.province);
   const shipTo = cleanAllSpaces(row['Description(Ship-To (Outbound))'] || row.ship_to_desc) || prov;
   return [
@@ -102,6 +108,8 @@ function getDistinctKey(row) {
 
 function getMapRouteKey(row) {
   if (!row) return '';
+  if (row._parsed?.mapRouteKey) return row._parsed.mapRouteKey;
+
   const origin = cleanAllSpaces(row['ต้นทาง'] || row.origin);
   const prov = cleanAllSpaces(row['จังหวัด'] || row.province);
   let shipTo = cleanAllSpaces(row['Description(Ship-To (Outbound))'] || row.ship_to_desc);
@@ -157,6 +165,58 @@ function showToast(msg) {
   }
 }
 
+function precomputeRouteData(routes) {
+  if (!Array.isArray(routes) || routes.length === 0) return [];
+  
+  return routes.map(row => {
+    const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
+    const destProv = String(row.province || row['จังหวัด'] || '-').trim();
+    let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
+    if (!shipTo || shipTo === '-') shipTo = destProv;
+
+    const trips = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    const totalPct = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    const availPct = Math.max(0, 100 - totalPct);
+    const availTrips = trips * (availPct / 100);
+
+    const cleanOrigin = cleanAllSpaces(origin);
+    const cleanCustomer = cleanAllSpaces(row.customer_name || row['ลูกค้า'] || '-');
+    const cleanCustomerType = cleanAllSpaces(row.customer_type || row['ประเภทลูกค้า'] || '-');
+    const cleanProduct = cleanAllSpaces(row.product_category || row['ประเภทสินค้า'] || '-');
+    const cleanProv = cleanAllSpaces(destProv);
+    const cleanZone = cleanAllSpaces(row.zone || row['Zone'] || '-');
+    const cleanTruck = cleanAllSpaces(row.truck_type || row['ประเภทรถ'] || '-');
+    const cleanShipTo = cleanAllSpaces(shipTo);
+    const cleanCarrier = cleanAllSpaces(row.fwd_agent_desc || row['Description(FwdAgent)'] || '');
+
+    const distinctKey = [cleanOrigin, cleanCustomer, cleanCustomerType, cleanProduct, cleanProv, cleanZone, cleanTruck, cleanShipTo].join('__');
+    const mapRouteKey = `${cleanOrigin}__${cleanShipTo}`;
+    const searchIndex = `${row.id || ''} ${origin} ${destProv} ${row.customer_name || ''} ${row.fwd_agent_desc || ''}`.toLowerCase();
+
+    return {
+      ...row,
+      _parsed: {
+        trips,
+        totalPct,
+        availPct,
+        availTrips,
+        cleanOrigin,
+        cleanCustomer,
+        cleanCustomerType,
+        cleanProduct,
+        cleanProv,
+        cleanZone,
+        cleanTruck,
+        cleanShipTo,
+        cleanCarrier,
+        distinctKey,
+        mapRouteKey,
+        searchIndex
+      }
+    };
+  });
+}
+
 // ==============================================================================
 // 3. APPLICATION LIFECYCLE & DATA BOOTSTRAP
 // ==============================================================================
@@ -171,7 +231,6 @@ async function initAppAfterLogin() {
   }
 
   try {
-    // 1. ดึงข้อมูลจากฐานข้อมูลให้เสร็จเรียบร้อยก่อน
     const [provData, originData, routeData, shipToData] = await Promise.all([
       typeof fetchProvinceLocations === 'function' ? fetchProvinceLocations().catch(() => ({})) : Promise.resolve({}),
       typeof fetchOriginLocations === 'function' ? fetchOriginLocations().catch(() => ({})) : Promise.resolve({}),
@@ -181,13 +240,35 @@ async function initAppAfterLogin() {
 
     window.provinceLocationMap = provData || {};
     window.originLocationMap = originData || {};
-    window.globalRouteSheetData = Array.isArray(routeData) ? routeData : [];
+    window.globalRouteSheetData = precomputeRouteData(Array.isArray(routeData) ? routeData : []);
 
-    // 2. สั่งแสดงผลหน้าจอและวาดแผนที่เมื่อข้อมูลพร้อม 100%
+    if (Array.isArray(shipToData) && shipToData.length > 0) {
+      if (typeof initShippingLocationLookup === 'function') initShippingLocationLookup(shipToData);
+      
+      shipToData.forEach(item => {
+        const desc = String(item['Description(Ship-To (Outbound))'] || item.ship_to_desc || '').trim();
+        const rawLatLng = item['LAT,LONG'] || item.lat_long || '';
+        const coords = (typeof parseLatLng === 'function') ? parseLatLng(rawLatLng) : null;
+        const lat = coords ? coords.lat : parseFloat(item.lat || item.dest_lat);
+        const lng = coords ? coords.lng : parseFloat(item.lng || item.dest_lng);
+
+        if (desc && !isNaN(lat) && !isNaN(lng)) {
+          shipToLocationMap[desc] = { lat, lng };
+          shipToLocationMap[desc.toLowerCase()] = { lat, lng };
+        }
+      });
+    }
+
     if (typeof updateView === 'function') updateView();
     if (typeof populateDashboardFilters === 'function') populateDashboardFilters(window.globalRouteSheetData);
     if (typeof applyDynamicFilters === 'function') await applyDynamicFilters();
     if (typeof updateExecutiveDashboard === 'function') await updateExecutiveDashboard(window.globalRouteSheetData);
+
+    setTimeout(() => {
+      if (typeof dashMap !== 'undefined' && dashMap) dashMap.invalidateSize();
+      if (typeof simMap !== 'undefined' && simMap) simMap.invalidateSize();
+      if (typeof execMap !== 'undefined' && execMap) execMap.invalidateSize();
+    }, 300);
 
   } catch (err) {
     console.error('Data Fetch Error:', err);
@@ -199,7 +280,7 @@ window.forceRefreshRouteData = async function() {
   try {
     const routeData = await fetchNewRouteSheet();
     if (Array.isArray(routeData)) {
-      window.globalRouteSheetData = routeData;
+      window.globalRouteSheetData = precomputeRouteData(routeData);
 
       if (typeof populateDashboardFilters === 'function') {
         populateDashboardFilters(window.globalRouteSheetData);
@@ -261,20 +342,20 @@ function calculateExecAnalytics(routeData) {
   };
 
   routeData.forEach(row => {
-    const origin = String(row['ต้นทาง'] || row.origin || '-').trim();
-    const province = String(row['จังหวัด'] || row.province || '-').trim();
-    let shipTo = String(row['Description(Ship-To (Outbound))'] || row.ship_to_desc || '').trim();
+    const p = row._parsed;
+    const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
+    const province = String(row.province || row['จังหวัด'] || '-').trim();
+    let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
     if (!shipTo || shipTo === '-') shipTo = province;
-    const zone = String(row['Zone'] || row.zone || '-').trim();
-    const truck = String(row['ประเภทรถ'] || row.truck_type || '-').trim();
-    const rawFwdAgent = String(row['Description(FwdAgent)'] || row.fwd_agent_desc || row['ผู้รับเหมา'] || '').trim();
+    const zone = String(row.zone || row['Zone'] || '-').trim();
+    const truck = String(row.truck_type || row['ประเภทรถ'] || '-').trim();
+    const rawFwdAgent = String(row.fwd_agent_desc || row['Description(FwdAgent)'] || row['ผู้รับเหมา'] || '').trim();
 
-    const trips = parseNum(row['AVG Trip/Week'] || row.avg_trip_week || row.avg_trips);
+    const trips = p ? p.trips : parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
+    const rowActualAvailTrips = p ? p.availTrips : (trips * (availPct / 100));
+
     result.totalTripsSum += trips;
-
-    const pctTotal = parseNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total);
-    const availPct = Math.max(0, 100 - pctTotal);
-    const rowActualAvailTrips = trips * (availPct / 100);
 
     if (availPct === 0) {
       result.carrierUnavailableCount++;
@@ -284,7 +365,7 @@ function calculateExecAnalytics(routeData) {
       result.availTripsSum += rowActualAvailTrips;
     }
 
-    const distinctKey = getDistinctKey(row);
+    const distinctKey = p ? p.distinctKey : getDistinctKey(row);
     if (!result.distinctRouteMap[distinctKey]) {
       result.distinctRouteMap[distinctKey] = { hasAvailable: false, totalTrips: 0, availTrips: 0 };
     }
@@ -350,16 +431,9 @@ function updateExecAdvancedAnalytics(routeData) {
 
   const data = calculateExecAnalytics(routeData);
 
-  // 1. Render Top KPIs
   renderExecTopKPIs(data);
-
-  // 2. Render Zone Summary Cards
   renderExecZoneSummaryList(data.zoneSummaryMap);
-
-  // 3. Render Truck Type Availability
   renderExecTruckAvailList(data.truckAvailMap);
-
-  // 4. Render Carrier Capacity Breakdown
   renderExecCarrierCapacity(data.carrierAvailMap, data.allRoutesList);
 }
 
@@ -511,6 +585,7 @@ function renderExecTruckAvailList(truckAvailMap) {
       </div>
     `;
   }).join('');
+  if (typeof lucide !== 'undefined') lucide.createIcons({ root: truckListEl });
 }
 
 function renderExecCarrierCapacity(carrierAvailMap, allRoutesList) {
@@ -551,7 +626,7 @@ function renderExecCarrierCapacity(carrierAvailMap, allRoutesList) {
         </div>
       `;
     }).join('');
-    if (typeof lucide !== 'undefined') lucide.createIcons();
+    if (typeof lucide !== 'undefined') lucide.createIcons({ root: listEl });
   };
 
   window.filterCarrierCardList = function(keyword) {
@@ -581,7 +656,6 @@ function renderExecCarrierCapacity(carrierAvailMap, allRoutesList) {
   window.execAllRoutesCache = allRoutesList;
   const currentZone = document.getElementById('select-top10-zone')?.value || 'ALL';
   if (typeof renderTop10AvailableRoutes === 'function') renderTop10AvailableRoutes(currentZone);
-  if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 function updateExecNewOrderMappingSection(customData = null) {
@@ -594,12 +668,12 @@ function updateExecNewOrderMappingSection(customData = null) {
 
   const zoneStats = {};
   sourceData.forEach(row => {
-    const zoneName = String(row['Zone'] || row.zone || '').trim();
+    const p = row._parsed;
+    const zoneName = String(row.zone || row['Zone'] || '').trim();
     if (zoneName && zoneName !== 'undefined' && zoneName !== 'null' && zoneName !== '-') {
-      const trips = parseNum(row['AVG Trip/Week'] || row.avg_trip_week || row.avg_trips, 0);
-      const pctTotal = parseNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0);
-      const availPct = Math.max(0, 100 - pctTotal);
-      const availTrips = trips * (availPct / 100);
+      const trips = p ? p.trips : parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+      const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
+      const availTrips = p ? p.availTrips : (trips * (availPct / 100));
 
       if (!zoneStats[zoneName]) {
         zoneStats[zoneName] = { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 };
@@ -704,18 +778,16 @@ function populateExecProvinceMultiSelect(routeData) {
 }
 
 function applyExecProvinceFilter() {
-  const checkboxes = document.querySelectorAll('.checkbox-exec-province:checked');
-  const rawValues = Array.from(checkboxes).map(cb => cb.value.trim());
-  const isAll = rawValues.includes('ALL') || rawValues.length === 0;
-  const selectedCleanProvs = rawValues.map(v => cleanAllSpaces(v));
-
+  const selectedCleanProvs = getMultiSelectValues('exec-province');
   const allRoutes = window.globalRouteSheetData || [];
   if (!allRoutes || allRoutes.length === 0) return;
+
+  const isAll = selectedCleanProvs.includes('all') || selectedCleanProvs.length === 0;
 
   let filteredRoutes = allRoutes;
   if (!isAll) {
     filteredRoutes = allRoutes.filter(row => {
-      const p = cleanAllSpaces(row.province || row['จังหวัด'] || '');
+      const p = row._parsed ? row._parsed.cleanProv : cleanAllSpaces(row.province || row['จังหวัด'] || '');
       return selectedCleanProvs.some(sel => p === sel || p.includes(sel) || sel.includes(p));
     });
   }
@@ -813,17 +885,17 @@ function populateDashboardFilters(data) {
     if (typeof lucide !== 'undefined') lucide.createIcons({ root: container });
   };
 
-const originLocations = Object.values(window.originLocationMap || {});
-const uniqueOriginZones = [...new Set(originLocations.map(l => l.zone).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
-const uniqueOriginProvinces = [...new Set(originLocations.map(l => l.province).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
+  const originLocations = Object.values(window.originLocationMap || {});
+  const uniqueOriginZones = [...new Set(originLocations.map(l => l.zone).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
+  const uniqueOriginProvinces = [...new Set(originLocations.map(l => l.province).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
 
-updateSelectOptions('filter-origin-zone', uniqueOriginZones, 'All Origin Zones');
-updateSelectOptions('filter-origin-province', uniqueOriginProvinces, 'All Origin Provinces');
-updateSelectOptions('filter-origin-dc', getUniqueValues('origin', 'ต้นทาง'), 'All Origin DCs');
+  // 💡 แก้ไขจุด Overwrite: เซ็ตค่าแต่ละ Dropdown เพียงครั้งเดียวอย่างถูกต้อง
+  updateSelectOptions('filter-origin-zone', uniqueOriginZones, 'All Origin Zones');
+  updateSelectOptions('filter-origin-province', uniqueOriginProvinces, 'All Origin Provinces');
+  updateSelectOptions('filter-origin-dc', getUniqueValues('origin', 'ต้นทาง'), 'All Origin DCs');
 
   updateSelectOptions('filter-carrier', getUniqueValues('fwd_agent_desc', 'Description(FwdAgent)'), 'All Carriers');
   updateSelectOptions('filter-truck-type', getUniqueValues('truck_type', 'ประเภทรถ'), 'All Truck Types');
-  updateSelectOptions('filter-origin-province', getUniqueValues('origin', 'ต้นทาง'), 'All Origin DCs');
   updateSelectOptions('filter-dest-region', getUniqueValues('zone', 'Zone'), 'All Zones');
   updateSelectOptions('filter-dest-province', getUniqueValues('province', 'จังหวัด'), 'All Provinces');
   updateSelectOptions('filter-customer-type', getUniqueValues('customer_type', 'ประเภทลูกค้า'), 'All Types');
@@ -845,7 +917,6 @@ window.filterDropdownList = function(filterId, keyword) {
   });
 };
 
-// Unified Central Checkbox Change Handler
 window.handleCheckboxChange = function(filterId, value) {
   const checkboxes = document.querySelectorAll(`.checkbox-${filterId}`);
   const allCheckbox = Array.from(checkboxes).find(cb => cb.value === 'ALL');
@@ -863,7 +934,6 @@ window.handleCheckboxChange = function(filterId, value) {
 
   updateFilterLabel(filterId, filterId === 'exec-province' ? 'All Provinces' : 'All');
 
-  // Dispatch to relevant sub-filter routine
   if (filterId === 'exec-province') {
     applyExecProvinceFilter();
   } else {
@@ -882,12 +952,20 @@ window.toggleCustomDropdown = function(dropdownId) {
 async function applyDynamicFilters() {
   if (!window.globalRouteSheetData || window.globalRouteSheetData.length === 0) {
     window.globalRouteSheetData = (typeof fetchNewRouteSheet === 'function') ? await fetchNewRouteSheet() : [];
+    window.globalRouteSheetData = precomputeRouteData(window.globalRouteSheetData);
+  }
+
+  if (!window.globalRouteSheetData[0]?._parsed) {
+    window.globalRouteSheetData = precomputeRouteData(window.globalRouteSheetData);
   }
 
   const searchKeyword = (document.querySelector('#filters-content input[type="text"]')?.value || '').trim().toLowerCase();
+  
   const selCarriers = getMultiSelectValues('filter-carrier');
   const selTruckTypes = getMultiSelectValues('filter-truck-type');
-  const selOrigins = getMultiSelectValues('filter-origin-province');
+  const selOriginDCs = getMultiSelectValues('filter-origin-dc');
+  const selOriginZones = getMultiSelectValues('filter-origin-zone');
+  const selOriginProvinces = getMultiSelectValues('filter-origin-province');
   const selDestRegions = getMultiSelectValues('filter-dest-region');
   const selDestProvinces = getMultiSelectValues('filter-dest-province');
   const selCustomerTypes = getMultiSelectValues('filter-customer-type');
@@ -895,69 +973,45 @@ async function applyDynamicFilters() {
   const selShipToDescs = getMultiSelectValues('filter-shipto-desc');
   const selProducts = getMultiSelectValues('filter-product-cat');
 
-  // ค่าช่วง % Backhaul
-  const minBackhaulInput = document.getElementById('filter-backhaul-min')?.value;
-  const maxBackhaulInput = document.getElementById('filter-backhaul-max')?.value;
-  const minBackhaul = minBackhaulInput !== '' && !isNaN(minBackhaulInput) ? parseFloat(minBackhaulInput) : 0;
-  const maxBackhaul = maxBackhaulInput !== '' && !isNaN(maxBackhaulInput) ? parseFloat(maxBackhaulInput) : 100;
-
-  // 💡 1. ดึงค่าจำนวนเที่ยวว่างขั้นต่ำ (Min Available Trips)
-  const minAvailTripsInput = document.getElementById('filter-min-avail-trips')?.value;
-  const minAvailTrips = minAvailTripsInput !== '' && !isNaN(minAvailTripsInput) ? parseFloat(minAvailTripsInput) : 0;
-
+  const minBackhaul = parseFloat(document.getElementById('filter-backhaul-min')?.value) || 0;
+  const maxBackhaul = parseFloat(document.getElementById('filter-backhaul-max')?.value) || 100;
+  const minAvailTrips = parseFloat(document.getElementById('filter-min-avail-trips')?.value) || 0;
   const heatMetric = document.getElementById('filter-heat-metric')?.value || 'all';
-  state.activeFilters.heatMetric = heatMetric;
 
-  const matchMulti = (selectedList, itemValue) => {
-    if (selectedList.includes('all') || selectedList.length === 0) return true;
-    const target = cleanAllSpaces(itemValue);
-    return selectedList.some(val => val !== 'all' && (target.includes(val) || val.includes(target)));
+  const isAll = (arr) => arr.includes('all') || arr.length === 0;
+
+  const matchCriteria = (selectedList, cleanVal) => {
+    if (isAll(selectedList)) return true;
+    return selectedList.some(val => val !== 'all' && (cleanVal.includes(val) || val.includes(cleanVal)));
   };
 
+  const hasOriginZoneFilter = !isAll(selOriginZones);
+  const hasOriginProvFilter = !isAll(selOriginProvinces);
+
   const filteredData = window.globalRouteSheetData.filter(row => {
-    const tripVal = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
-    const pctTotal = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
-    const availBackhaul = Math.max(0, 100 - pctTotal);
-    
-    // คำนวณจำนวนเที่ยวว่างจริงต่อสัปดาห์
-    const rowAvailTrips = tripVal * (availBackhaul / 100);
+    const p = row._parsed;
 
-    if (heatMetric === 'quota' && availBackhaul <= 0) return false;
-    if (availBackhaul < minBackhaul || availBackhaul > maxBackhaul) return false;
+    if (p.availPct < minBackhaul || p.availPct > maxBackhaul) return false;
+    if (p.availTrips < minAvailTrips) return false;
+    if (heatMetric === 'quota' && p.availPct <= 0) return false;
 
-    // 💡 2. กรองเส้นทางที่เที่ยวว่างน้อยกว่าค่าที่กำหนด
-    if (rowAvailTrips < minAvailTrips) return false;
+    if (!matchCriteria(selCarriers, p.cleanCarrier)) return false;
+    if (!matchCriteria(selTruckTypes, p.cleanTruck)) return false;
+    if (!matchCriteria(selOriginDCs, p.cleanOrigin)) return false;
+    if (!matchCriteria(selDestRegions, p.cleanZone)) return false;
+    if (!matchCriteria(selDestProvinces, p.cleanProv)) return false;
+    if (!matchCriteria(selCustomerTypes, p.cleanCustomerType)) return false;
+    if (!matchCriteria(selCustomerNames, p.cleanCustomer)) return false;
+    if (!matchCriteria(selShipToDescs, p.cleanShipTo)) return false;
+    if (!matchCriteria(selProducts, p.cleanProduct)) return false;
 
-    if (!matchMulti(selCarriers, row.fwd_agent_desc || row['Description(FwdAgent)'])) return false;
-    if (!matchMulti(selTruckTypes, row.truck_type || row['ประเภทรถ'])) return false;
-    if (!matchMulti(selOrigins, row.origin || row['ต้นทาง'])) return false;
-    if (!matchMulti(selDestRegions, row.zone || row['Zone'])) return false;
-    if (!matchMulti(selDestProvinces, row.province || row['จังหวัด'])) return false;
-    if (!matchMulti(selCustomerTypes, row.customer_type || row['ประเภทลูกค้า'])) return false;
-    if (!matchMulti(selCustomerNames, row.customer_name || row['ลูกค้า'])) return false;
-    if (!matchMulti(selShipToDescs, row.ship_to_desc || row['Description(Ship-To (Outbound))'])) return false;
-    if (!matchMulti(selProducts, row.product_category || row['ประเภทสินค้า'])) return false;
-
-    if (searchKeyword !== '') {
-      const rowStr = [
-        row.id, row['ID'], row.origin, row['ต้นทาง'], row.province, row['จังหวัด'],
-        row.customer_name, row['ลูกค้า'], row.fwd_agent_desc, row['Description(FwdAgent)']
-      ].filter(Boolean).join(' ').toLowerCase();
-      if (!rowStr.includes(searchKeyword)) return false;
+    if (hasOriginZoneFilter || hasOriginProvFilter) {
+      const originInfo = window.originLocationMap ? (window.originLocationMap[p.cleanOrigin] || window.originLocationMap[row.origin]) : null;
+      if (hasOriginZoneFilter && !matchCriteria(selOriginZones, cleanAllSpaces(originInfo?.zone))) return false;
+      if (hasOriginProvFilter && !matchCriteria(selOriginProvinces, cleanAllSpaces(originInfo?.province))) return false;
     }
-    // ดึงค่าที่เลือก
-    const selOriginZones = getMultiSelectValues('filter-origin-zone');
-    const selOriginProvinces = getMultiSelectValues('filter-origin-province');
-    const selOriginDCs = getMultiSelectValues('filter-origin-dc');
 
-    // เพิ่มเงื่อนไขใน filteredData.filter(row => { ... })
-    const originName = String(row.origin || row['ต้นทาง'] || '').trim();
-    const originInfo = window.originLocationMap ? window.originLocationMap[originName] || window.originLocationMap[originName.toLowerCase()] : null;
-
-    // กรอง Origin Zone & Province ผ่านข้อมูลตาราง brf_locations
-    if (!matchMulti(selOriginZones, originInfo?.zone)) return false;
-    if (!matchMulti(selOriginProvinces, originInfo?.province)) return false;
-    if (!matchMulti(selOriginDCs, originName)) return false;
+    if (searchKeyword && !p.searchIndex.includes(searchKeyword)) return false;
 
     return true;
   });
@@ -965,23 +1019,26 @@ async function applyDynamicFilters() {
   currentPage = 1;
   renderTable(filteredData);
 
-  if (typeof updateMapDisplay === 'function') {
-    updateMapDisplay(filteredData);
-  } else if (typeof drawDashboardRoutes === 'function') {
-    drawDashboardRoutes(filteredData);
-  }
+  clearTimeout(mapRenderDebounceTimer);
+  mapRenderDebounceTimer = setTimeout(() => {
+    if (typeof updateMapDisplay === 'function') {
+      updateMapDisplay(filteredData);
+    } else if (typeof drawDashboardRoutes === 'function') {
+      drawDashboardRoutes(filteredData);
+    }
+  }, 120);
 }
 
 function resetMapFilters() {
   const searchInput = document.querySelector('#filters-content input[type="text"]');
   if (searchInput) searchInput.value = '';
 
-const filterIds = [
-  'filter-carrier', 'filter-truck-type', 
-  'filter-origin-zone', 'filter-origin-province', 'filter-origin-dc',
-  'filter-dest-region', 'filter-dest-province', 'filter-customer-type',
-  'filter-customer-name', 'filter-shipto-desc', 'filter-product-cat'
-];
+  const filterIds = [
+    'filter-carrier', 'filter-truck-type', 
+    'filter-origin-zone', 'filter-origin-province', 'filter-origin-dc',
+    'filter-dest-region', 'filter-dest-province', 'filter-customer-type',
+    'filter-customer-name', 'filter-shipto-desc', 'filter-product-cat'
+  ];
 
   filterIds.forEach(id => {
     const checkboxes = document.querySelectorAll(`.checkbox-${id}`);
@@ -1018,70 +1075,59 @@ function groupRouteData(filteredData = []) {
   const groupedRoutes = {};
 
   filteredData.forEach(row => {
-    const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
-    const customer = String(row.customer_name || row['ลูกค้า'] || '-').trim();
-    const customerType = String(row.customer_type || row['ประเภทลูกค้า'] || '-').trim();
-    const product = String(row.product_category || row['ประเภทสินค้า'] || '-').trim();
-    const destProv = String(row.province || row['จังหวัด'] || '-').trim();
-    const zone = String(row.zone || row['Zone'] || '-').trim();
-    const truck = String(row.truck_type || row['ประเภทรถ'] || '-').trim();
-    let shipToDesc = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
-    if (!shipToDesc || shipToDesc === '-') shipToDesc = destProv;
-
-    const routeKey = getDistinctKey(row);
-    const mapRouteKey = getMapRouteKey(row);
+    const p = row._parsed;
+    const routeKey = p ? p.distinctKey : getDistinctKey(row);
+    const trips = p ? p.trips : parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    const totalPct = p ? p.totalPct : parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    const availTrips = p ? p.availTrips : (trips * (Math.max(0, 100 - totalPct) / 100));
 
     if (!groupedRoutes[routeKey]) {
       groupedRoutes[routeKey] = {
         id: 'grp-' + Math.random().toString(36).substring(2, 11),
-        origin,
-        zone,
-        province: destProv,
-        customerName: customer,
-        customerType,
-        shipToDesc,
-        productCat: product,
-        truckType: truck,
-        mapRouteKey: mapRouteKey,
+        origin: row.origin || row['ต้นทาง'] || '-',
+        zone: row.zone || row['Zone'] || '-',
+        province: row.province || row['จังหวัด'] || '-',
+        customerName: row.customer_name || row['ลูกค้า'] || '-',
+        customerType: row.customer_type || row['ประเภทลูกค้า'] || '-',
+        shipToDesc: row.ship_to_desc || row['Description(Ship-To (Outbound))'] || row.province || '-',
+        productCat: row.product_category || row['ประเภทสินค้า'] || '-',
+        truckType: row.truck_type || row['ประเภทรถ'] || '-',
+        mapRouteKey: p ? p.mapRouteKey : getMapRouteKey(row),
         uniqueSubcons: new Set(),
         totalTrips: 0,
         totalAvailTrips: 0,
         sumPct: 0,
-        availablePct: 0, // ค่าเริ่มต้น
+        availablePct: 0,
         vendors: []
       };
     }
 
     const fwdAgent = String(row.fwd_agent_desc || row['Description(FwdAgent)'] || 'ไม่ระบุ').trim();
-    const tripWeek = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
-    const totalPct = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
-    const rowAvailPct = Math.max(0, 100 - totalPct);
-
     if (fwdAgent !== 'ไม่ระบุ' && fwdAgent !== '-') {
       groupedRoutes[routeKey].uniqueSubcons.add(fwdAgent);
     }
-    groupedRoutes[routeKey].totalTrips += tripWeek;
-    groupedRoutes[routeKey].totalAvailTrips += (tripWeek * (rowAvailPct / 100));
+
+    groupedRoutes[routeKey].totalTrips += trips;
+    groupedRoutes[routeKey].totalAvailTrips += availTrips;
     groupedRoutes[routeKey].sumPct += totalPct;
     groupedRoutes[routeKey].vendors.push(row);
   });
 
-  // 💡 คำนวณเปอร์เซ็นต์ความว่างและ Sort รายชื่อผู้รับเหมาในแต่ละกลุ่ม
   Object.values(groupedRoutes).forEach(grp => {
     const count = grp.vendors.length;
     const avgTotalPct = count > 0 ? (grp.sumPct / count) : 0;
     grp.availablePct = Math.max(0, Math.round(100 - avgTotalPct));
 
-    // เรียงผู้รับเหมาใน Accordion จาก % ว่างมากไปน้อยด้วย
     grp.vendors.sort((a, b) => {
-      const availA = Math.max(0, 100 - parseNum(a.pct_total || a['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
-      const availB = Math.max(0, 100 - parseNum(b.pct_total || b['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
+      const availA = a._parsed ? a._parsed.availPct : Math.max(0, 100 - parseNum(a.pct_total || a['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
+      const availB = b._parsed ? b._parsed.availPct : Math.max(0, 100 - parseNum(b.pct_total || b['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
       return availB - availA;
     });
   });
 
   return groupedRoutes;
 }
+
 function renderTable(filteredData = []) {
   const thead = document.getElementById('table-head');
   const tbody = document.getElementById('table-body');
@@ -1105,6 +1151,7 @@ function renderTable(filteredData = []) {
     if (paginationEl) paginationEl.innerHTML = '';
     return;
   }
+
   let totalTripsSum = 0;
   let totalAvailTripsSum = 0;
   let availRouteGroupsCount = 0;
@@ -1139,7 +1186,6 @@ function renderTable(filteredData = []) {
   if (opsAvailTripsEl) opsAvailTripsEl.innerText = formatNum(totalAvailTripsSum, 1);
   if (opsAvailPctEl) opsAvailPctEl.innerText = `(${execStyleAvailPct.toFixed(2)}%)`;
 
-  // ส่วนเรนเดอร์ Pagination และตารางคงเดิม
   const totalPages = Math.ceil(routeKeys.length / PAGE_SIZE);
   if (currentPage > totalPages) currentPage = 1;
   const startIndex = (currentPage - 1) * PAGE_SIZE;
@@ -1231,14 +1277,14 @@ function renderTable(filteredData = []) {
                 </thead>
                 <tbody class="divide-y divide-slate-200/60 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
                   ${grp.vendors.map(v => {
+                    const vp = v._parsed;
                     const fwdAgentName = v.fwd_agent_desc || v['Description(FwdAgent)'] || '-';
                     const vOutsideRoute = String(v.brf_outside_route || v['ระบุต้นทาง และ ปลายทาง งานนอกของ BRF'] || '').trim();
-                    const vTrip = parseNum(v.avg_trip_week || v['AVG Trip/Week'], 0);
+                    const vTrip = vp ? vp.trips : parseNum(v.avg_trip_week || v['AVG Trip/Week'], 0);
                     const vOffPeak = parseNum(v.avg_off_peak || v['Avg Off Peak'], 0);
                     const vPeak = parseNum(v.avg_peak || v['Avg Peak'], 0);
-                    const vTotalPct = parseNum(v.pct_total || v['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
-                    const vendorAvailablePct = Math.max(0, 100 - vTotalPct);
-                    const vendorAvailTrips = vTrip * (vendorAvailablePct / 100);
+                    const vendorAvailablePct = vp ? vp.availPct : Math.max(0, 100 - parseNum(v.pct_total || v['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
+                    const vendorAvailTrips = vp ? vp.availTrips : (vTrip * (vendorAvailablePct / 100));
                     const isFull = vendorAvailablePct === 0;
                     const bVal = parseNum(v.pct_boonrawd || v['%รับงานต่อสำหรับงานบุญรอด'], 0);
                     const oVal = parseNum(v.pct_own || v['%รับงานต่องานของผู้รับเหมาเอง'], 0);
@@ -1390,7 +1436,7 @@ window.filterTableByOrigin = function(originName) {
     : [];
 
   const matchedRows = sourceData.filter(row => {
-    const rowOrigin = cleanAllSpaces(row['ต้นทาง'] || row.origin || '');
+    const rowOrigin = row._parsed ? row._parsed.cleanOrigin : cleanAllSpaces(row['ต้นทาง'] || row.origin || '');
     return rowOrigin === cleanTargetOrigin || rowOrigin.includes(cleanTargetOrigin);
   });
 
@@ -1461,9 +1507,6 @@ window.toggleRouteDetail = function(routeId) {
 // 7. ZONE DRILLDOWN & DETAIL TABLE CONTROLLER (PROVINCE FILTER SYNCED)
 // ==============================================================================
 
-/**
- * ฟังก์ชันช่วยดึงข้อมูลเส้นทางที่ผ่านการกรองจังหวัดของหน้า Executive
- */
 function getExecFilteredRoutes() {
   const allRoutes = window.globalRouteSheetData || [];
   if (!allRoutes || allRoutes.length === 0) return [];
@@ -1476,13 +1519,12 @@ function getExecFilteredRoutes() {
   if (isAll) return allRoutes;
 
   return allRoutes.filter(row => {
-    const p = cleanAllSpaces(row.province || row['จังหวัด'] || '');
+    const p = row._parsed ? row._parsed.cleanProv : cleanAllSpaces(row.province || row['จังหวัด'] || '');
     return selectedProvinces.some(sel => p === sel || p.includes(sel) || sel.includes(p));
   });
 }
 
 window.selectExecZoneCard = function(zoneName, cardEl) {
-  // 1. ไฮไลต์การ์ดที่ถูกเลือก
   document.querySelectorAll('#exec-region-summary-list > div').forEach(card => {
     card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
     card.classList.add('border-slate-200/90', 'dark:border-slate-800');
@@ -1493,7 +1535,6 @@ window.selectExecZoneCard = function(zoneName, cardEl) {
     cardEl.classList.add('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
   }
 
-  // 2. เรียกแสดงตารางรายละเอียด (ดึงข้อมูลเฉพาะจังหวัดที่เลือกไว้)
   showExecZoneDetailsTable(zoneName);
 };
 
@@ -1507,13 +1548,11 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
 
   tbody.innerHTML = '';
 
-  // 💡 1. ดึงข้อมูลที่ผ่านการกรองจังหวัดมาเป็นชุดตั้งต้น
   const sourceData = customData || getExecFilteredRoutes();
   const cleanTargetZone = cleanAllSpaces(zoneName);
 
-  // 💡 2. กรองซ้ำด้วย Zone ที่เลือก
   const matchedRoutes = sourceData.filter(row => {
-    const rowZone = cleanAllSpaces(row['Zone'] || row.zone || '');
+    const rowZone = row._parsed ? row._parsed.cleanZone : cleanAllSpaces(row.zone || row['Zone'] || '');
     return rowZone === cleanTargetZone || rowZone.includes(cleanTargetZone);
   });
 
@@ -1524,23 +1563,17 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
     tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-slate-400 font-sans">ไม่พบข้อมูลเส้นทางในโซน ${escapeHtml(zoneName)} ตามจังหวัดที่เลือก</td></tr>`;
   } else {
     tbody.innerHTML = matchedRoutes.map(row => {
-      const origin = row['ต้นทาง'] || row.origin || '-';
-      const customer = row['ลูกค้า'] || row.customer_name || '-';
-      const shipToDesc = row['Description(Ship-To (Outbound))'] || row.ship_to_desc || row['จังหวัด'] || row.province || '-';
-      const province = row['จังหวัด'] || row.province || '-';
-      const product = row['ประเภทสินค้า'] || row.product_category || '-';
-      const truck = row['ประเภทรถ'] || row.truck_type || '-';
-      const fwdAgent = row['Description(FwdAgent)'] || row.fwd_agent_desc || 'ไม่ระบุ';
+      const p = row._parsed;
+      const origin = row.origin || row['ต้นทาง'] || '-';
+      const customer = row.customer_name || row['ลูกค้า'] || '-';
+      const shipToDesc = row.ship_to_desc || row['Description(Ship-To (Outbound))'] || row.province || row['จังหวัด'] || '-';
+      const province = row.province || row['จังหวัด'] || '-';
+      const product = row.product_category || row['ประเภทสินค้า'] || '-';
+      const truck = row.truck_type || row['ประเภทรถ'] || '-';
+      const fwdAgent = row.fwd_agent_desc || row['Description(FwdAgent)'] || 'ไม่ระบุ';
       
-      const avgTrip = (typeof parseNum === 'function') 
-        ? parseNum(row['AVG Trip/Week'] || row.avg_trip_week, 0)
-        : (parseFloat(row['AVG Trip/Week'] || row.avg_trip_week) || 0);
-
-      const totalPct = (typeof parseNum === 'function')
-        ? parseNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0)
-        : (parseFloat(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total) || 0);
-
-      const availPct = Math.max(0, 100 - totalPct);
+      const avgTrip = p ? p.trips : parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+      const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
       const color = getAvailColorScale(availPct);
 
       return `
@@ -1588,7 +1621,9 @@ window.drillDownExecZone = function(zoneName) {
   showExecZoneDetailsTable(zoneName);
 };
 
-// Simulation analysis
+// ==============================================================================
+// 8. SIMULATION & ORDER MAPPING ENGINE
+// ==============================================================================
 async function analyzeNewOrderMapping() {
   const selectedOrigin = document.getElementById('select-origin')?.value.trim() || 'ทั้งหมด';
   const selectedProduct = document.getElementById('select-product-category')?.value.trim() || 'ทั้งหมด';
@@ -1635,22 +1670,23 @@ async function analyzeNewOrderMapping() {
     return;
   }
 
+  const sOrigin = cleanAllSpaces(selectedOrigin);
+  const sProduct = cleanAllSpaces(selectedProduct);
+  const sProvince = cleanAllSpaces(selectedProvince);
+  const sZone = cleanAllSpaces(selectedZone);
+  const sTruck = cleanAllSpaces(selectedTruck);
+
   const matchedSubcons = routeData.filter(row => {
-    const fwdAgent = String(row['Description(FwdAgent)'] || row.fwd_agent_desc || '').trim();
-    const pctTotal = parseNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0);
+    const p = row._parsed;
+    const fwdAgent = String(row.fwd_agent_desc || row['Description(FwdAgent)'] || '').trim();
+    const pctTotal = p ? p.totalPct : parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
     if (!fwdAgent || pctTotal >= 100) return false;
 
-    const rowOrigin = String(row['ต้นทาง'] || row.origin || '').trim().toLowerCase();
-    const rowProduct = String(row['ประเภทสินค้า'] || row.product_category || '').trim().toLowerCase();
-    const rowProvince = String(row['จังหวัด'] || row.province || '').trim().toLowerCase();
-    const rowZone = String(row['Zone'] || row.zone || '').trim().toLowerCase();
-    const rowTruck = String(row['ประเภทรถ'] || row.truck_type || '').trim().toLowerCase();
-
-    const sOrigin = selectedOrigin.toLowerCase();
-    const sProduct = selectedProduct.toLowerCase();
-    const sProvince = selectedProvince.toLowerCase();
-    const sZone = selectedZone.toLowerCase();
-    const sTruck = selectedTruck.toLowerCase();
+    const rowOrigin = p ? p.cleanOrigin : cleanAllSpaces(row.origin || row['ต้นทาง'] || '');
+    const rowProduct = p ? p.cleanProduct : cleanAllSpaces(row.product_category || row['ประเภทสินค้า'] || '');
+    const rowProvince = p ? p.cleanProv : cleanAllSpaces(row.province || row['จังหวัด'] || '');
+    const rowZone = p ? p.cleanZone : cleanAllSpaces(row.zone || row['Zone'] || '');
+    const rowTruck = p ? p.cleanTruck : cleanAllSpaces(row.truck_type || row['ประเภทรถ'] || '');
 
     if (selectedOrigin !== 'ทั้งหมด' && rowOrigin && !rowOrigin.includes(sOrigin) && !sOrigin.includes(rowOrigin)) return false;
     if (selectedProduct !== 'ทั้งหมด' && rowProduct && !rowProduct.includes(sProduct) && !sProduct.includes(rowProduct)) return false;
@@ -1661,30 +1697,37 @@ async function analyzeNewOrderMapping() {
     return true;
   });
 
-  matchedSubcons.sort((a, b) => parseNum(a['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || a.pct_total, 0) - parseNum(b['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || b.pct_total, 0));
+  matchedSubcons.sort((a, b) => {
+    const totalA = a._parsed ? a._parsed.totalPct : parseNum(a.pct_total || a['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    const totalB = b._parsed ? b._parsed.totalPct : parseNum(b.pct_total || b['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    return totalA - totalB;
+  });
 
   const allRankedSubcons = matchedSubcons.map(item => {
-    const totalPct = parseNum(item['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || item.pct_total, 0);
+    const p = item._parsed;
+    const totalPct = p ? p.totalPct : parseNum(item.pct_total || item['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    const availCapPct = p ? p.availPct : Math.max(0, 100 - totalPct);
+
     return {
-      id: item['ID'] || item.id || '-',
-      origin: item['ต้นทาง'] || item.origin || '-',
-      customer: item['ลูกค้า'] || item.customer_name || '-',
-      customerType: item['ประเภทลูกค้า'] || item.customer_type || '-',
-      productCategory: item['ประเภทสินค้า'] || item.product_category || '-',
-      province: item['จังหวัด'] || item.province || '-',
-      zone: item['Zone'] || item.zone || '-',
-      truckType: item['ประเภทรถ'] || item.truck_type || '-',
-      fwdAgent: item['Description(FwdAgent)'] || item.fwd_agent_desc || 'ไม่ระบุผู้รับเหมา',
-      shipToDesc: item['Description(Ship-To (Outbound))'] || item.ship_to_desc || '-',
-      avgTripWeek: item['AVG Trip/Week'] || item.avg_trip_week || 0,
-      avgOffPeak: item['Avg Off Peak'] || item.avg_off_peak || 0,
-      avgPeak: item['Avg Peak'] || item.avg_peak || 0,
-      pctBRFOutside: parseNum(item['%รับงานต่อ สำหรับงานนอกของ BRF'] || item.pct_brf_outside, 0),
-      brfOutsideRoute: item['ระบุต้นทาง และ ปลายทาง งานนอกของ BRF'] || item.brf_outside_route || '-',
-      pctBoonrawd: parseNum(item['%รับงานต่อสำหรับงานบุญรอด'] || item.pct_boonrawd, 0),
-      pctOwn: parseNum(item['%รับงานต่องานของผู้รับเหมาเอง'] || item.pct_own, 0),
+      id: item.id || item['ID'] || '-',
+      origin: item.origin || item['ต้นทาง'] || '-',
+      customer: item.customer_name || item['ลูกค้า'] || '-',
+      customerType: item.customer_type || item['ประเภทลูกค้า'] || '-',
+      productCategory: item.product_category || item['ประเภทสินค้า'] || '-',
+      province: item.province || item['จังหวัด'] || '-',
+      zone: item.zone || item['Zone'] || '-',
+      truckType: item.truck_type || item['ประเภทรถ'] || '-',
+      fwdAgent: item.fwd_agent_desc || item['Description(FwdAgent)'] || 'ไม่ระบุผู้รับเหมา',
+      shipToDesc: item.ship_to_desc || item['Description(Ship-To (Outbound))'] || '-',
+      avgTripWeek: p ? p.trips : parseNum(item.avg_trip_week || item['AVG Trip/Week'], 0),
+      avgOffPeak: parseNum(item.avg_off_peak || item['Avg Off Peak'], 0),
+      avgPeak: parseNum(item.avg_peak || item['Avg Peak'], 0),
+      pctBRFOutside: parseNum(item.pct_brf_outside || item['%รับงานต่อ สำหรับงานนอกของ BRF'], 0),
+      brfOutsideRoute: item.brf_outside_route || item['ระบุต้นทาง และ ปลายทาง งานนอกของ BRF'] || '-',
+      pctBoonrawd: parseNum(item.pct_boonrawd || item['%รับงานต่อสำหรับงานบุญรอด'], 0),
+      pctOwn: parseNum(item.pct_own || item['%รับงานต่องานของผู้รับเหมาเอง'], 0),
       pctTotal: totalPct,
-      availableCapacityPct: Math.max(0, 100 - totalPct)
+      availableCapacityPct: availCapPct
     };
   });
 
@@ -1696,7 +1739,7 @@ async function analyzeNewOrderMapping() {
     drawAllSheetRoutesOnSimMap(matchedSubcons, selectedOrigin, selectedProvince, customerInfo, originInfo);
   }
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') lucide.createIcons({ root: resultsState });
 }
 
 function renderSubconRankings(recommendations, totalMatches) {
@@ -1758,7 +1801,7 @@ function renderSubconRankings(recommendations, totalMatches) {
     `;
   }).join('');
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') lucide.createIcons({ root: rankListEl });
 }
 
 function highlightSubconRoute(subconId, cardEl) {
@@ -1809,7 +1852,7 @@ function backToSimInput() {
 }
 
 // ==============================================================================
-// 8. CHARTS, VIEWS & UI CONTROLS
+// 9. CHARTS, VIEWS & UI CONTROLS
 // ==============================================================================
 function initCharts() {
   const commonOptions = {
@@ -1843,7 +1886,7 @@ function toggleDarkMode() {
   const themeBtn = document.getElementById('btn-theme-toggle');
   if (themeBtn && typeof lucide !== 'undefined') {
     themeBtn.innerHTML = `<i data-lucide="${state.isDark ? 'sun' : 'moon'}" class="w-4.5 h-4.5 text-slate-500 dark:text-slate-400 hover:text-orange-500 transition-colors"></i>`;
-    lucide.createIcons();
+    lucide.createIcons({ root: themeBtn });
   }
 
   if (regionChart) {
@@ -1910,7 +1953,7 @@ function renderSidebarMenu() {
       ${state.isSidebarOpen && typeof dict !== 'undefined' ? `<span class="whitespace-nowrap">${dict[state.lang].menu[m.id]}</span>` : ''}
     </button>
   `).join('');
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') lucide.createIcons({ root: container });
 }
 
 function switchMenu(id) {
@@ -1930,7 +1973,7 @@ function renderChat() {
 }
 
 // ==============================================================================
-// 9. EXPORT & EVENT LISTENERS
+// 10. EXPORT & EVENT LISTENERS
 // ==============================================================================
 window.exportFilteredDataToCSV = function() {
   const dataToExport = (currentFilteredData && currentFilteredData.length > 0) ? currentFilteredData : window.globalRouteSheetData;
@@ -1948,29 +1991,30 @@ window.exportFilteredDataToCSV = function() {
 
   let csvContent = '\uFEFF' + headers.join(',') + '\n';
   dataToExport.forEach(row => {
-    const avgTrip = parseNum(row['AVG Trip/Week'] || row.avg_trip_week, 0);
-    const totalPct = parseNum(row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || row.pct_total, 0);
-    const availPct = Math.max(0, 100 - totalPct);
+    const p = row._parsed;
+    const avgTrip = p ? p.trips : parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    const totalPct = p ? p.totalPct : parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    const availPct = p ? p.availPct : Math.max(0, 100 - totalPct);
     const availTrips = (avgTrip * (availPct / 100)).toFixed(2);
 
     const values = [
-      row['ID'] || row.id || '',
-      row['ต้นทาง'] || row.origin || '',
-      row['จังหวัด'] || row.province || '',
-      row['Zone'] || row.zone || '',
-      row['ลูกค้า'] || row.customer_name || '',
-      row['ประเภทลูกค้า'] || row.customer_type || '',
-      row['Description(Ship-To (Outbound))'] || row.ship_to_desc || '',
-      row['ประเภทสินค้า'] || row.product_category || '',
-      row['ประเภทรถ'] || row.truck_type || '',
-      row['Description(FwdAgent)'] || row.fwd_agent_desc || '',
+      row.id || row['ID'] || '',
+      row.origin || row['ต้นทาง'] || '',
+      row.province || row['จังหวัด'] || '',
+      row.zone || row['Zone'] || '',
+      row.customer_name || row['ลูกค้า'] || '',
+      row.customer_type || row['ประเภทลูกค้า'] || '',
+      row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '',
+      row.product_category || row['ประเภทสินค้า'] || '',
+      row.truck_type || row['ประเภทรถ'] || '',
+      row.fwd_agent_desc || row['Description(FwdAgent)'] || '',
       avgTrip,
-      parseNum(row['Avg Off Peak'] || row.avg_off_peak, 0),
-      parseNum(row['Avg Peak'] || row.avg_peak, 0),
-      `${parseNum(row['%รับงานต่อสำหรับงานบุญรอด'] || row.pct_boonrawd, 0)}%`,
-      `${parseNum(row['%รับงานต่องานของผู้รับเหมาเอง'] || row.pct_own, 0)}%`,
-      `${parseNum(row['%รับงานต่อ สำหรับงานนอกของ BRF'] || row.pct_brf_outside, 0)}%`,
-      row['ระบุต้นทาง และ ปลายทาง งานนอกของ BRF'] || row.brf_outside_route || '-',
+      parseNum(row.avg_off_peak || row['Avg Off Peak'], 0),
+      parseNum(row.avg_peak || row['Avg Peak'], 0),
+      `${parseNum(row.pct_boonrawd || row['%รับงานต่อสำหรับงานบุญรอด'], 0)}%`,
+      `${parseNum(row.pct_own || row['%รับงานต่องานของผู้รับเหมาเอง'], 0)}%`,
+      `${parseNum(row.pct_brf_outside || row['%รับงานต่อ สำหรับงานนอกของ BRF'], 0)}%`,
+      row.brf_outside_route || row['ระบุต้นทาง และ ปลายทาง งานนอกของ BRF'] || '-',
       `${totalPct}%`,
       `${availPct}%`,
       availTrips
@@ -1991,36 +2035,7 @@ window.exportFilteredDataToCSV = function() {
 };
 
 function setupEventListeners() {
-  document.getElementById('btn-login-ms')?.addEventListener('click', async () => {
-    const btn = document.getElementById('btn-login-ms');
-    const loginScreen = document.getElementById('login-screen');
-    const app = document.getElementById('main-app');
-
-    if (btn) {
-      btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Authenticating...`;
-      if (typeof lucide !== 'undefined') lucide.createIcons();
-    }
-    if (loginScreen) {
-      loginScreen.classList.add('opacity-0', 'pointer-events-none');
-      setTimeout(() => loginScreen.classList.add('hidden'), 500);
-    }
-    if (app) {
-      app.classList.remove('hidden');
-      setTimeout(() => app.classList.remove('opacity-0', 'pointer-events-none'), 50);
-    }
-    await initAppAfterLogin();
-  });
-
-  document.getElementById('btn-logout')?.addEventListener('click', () => {
-    const app = document.getElementById('main-app');
-    const loginScreen = document.getElementById('login-screen');
-    if (app) app.classList.add('hidden', 'opacity-0', 'pointer-events-none');
-    if (loginScreen) loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
-    const btnLogin = document.getElementById('btn-login-ms');
-    if (btnLogin) btnLogin.innerHTML = `Sign in with Microsoft`;
-    showToast('ออกจากระบบเรียบร้อยแล้ว');
-  });
-
+  
   const searchInput = document.querySelector('#filters-content input[type="text"]');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
@@ -2028,6 +2043,19 @@ function setupEventListeners() {
       searchDebounceTimer = setTimeout(() => applyDynamicFilters(), 300);
     });
   }
+
+  // 💡 แยก Timer สำหรับ Numeric Filters เพื่อไม่ให้รบกวนช่องค้นหา
+  const numericFilterIds = ['filter-backhaul-min', 'filter-backhaul-max', 'filter-min-avail-trips'];
+  numericFilterIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.removeAttribute('oninput');
+      el.addEventListener('input', () => {
+        clearTimeout(numericDebounceTimer);
+        numericDebounceTimer = setTimeout(() => applyDynamicFilters(), 250);
+      });
+    }
+  });
 
   document.querySelectorAll('#display-mode-segmented .mode-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -2059,7 +2087,7 @@ function setupEventListeners() {
     const toggleBtn = document.getElementById('toggle-sidebar');
     if (toggleBtn && typeof lucide !== 'undefined') {
       toggleBtn.innerHTML = `<i data-lucide="${state.isSidebarOpen ? 'chevron-left' : 'menu'}" class="w-4 h-4"></i>`;
-      lucide.createIcons();
+      lucide.createIcons({ root: toggleBtn });
     }
 
     renderSidebarMenu();
@@ -2080,7 +2108,7 @@ function setupEventListeners() {
     const chevron = document.getElementById('table-chevron');
     if (chevron && typeof lucide !== 'undefined') {
       chevron.setAttribute('data-lucide', state.isTableExpanded ? 'chevron-down' : 'chevron-up');
-      lucide.createIcons();
+      lucide.createIcons({ root: chevron.parentElement });
     }
     if (typeof dashMap !== 'undefined' && dashMap) setTimeout(() => dashMap.invalidateSize(), 300);
   });
@@ -2092,7 +2120,7 @@ function setupEventListeners() {
       content.classList.toggle('hidden');
       if (chevron && typeof lucide !== 'undefined') {
         chevron.setAttribute('data-lucide', content.classList.contains('hidden') ? 'chevron-down' : 'chevron-up');
-        lucide.createIcons();
+        lucide.createIcons({ root: chevron.parentElement });
       }
     }
   });
@@ -2105,7 +2133,7 @@ function setupEventListeners() {
         targetEl.classList.toggle('hidden');
         if (chevron && typeof lucide !== 'undefined') {
           chevron.setAttribute('data-lucide', targetEl.classList.contains('hidden') ? 'chevron-down' : 'chevron-up');
-          lucide.createIcons();
+          lucide.createIcons({ root: toggleBtn });
         }
       }
     });

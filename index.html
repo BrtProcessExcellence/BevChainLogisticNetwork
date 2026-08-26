@@ -88,20 +88,35 @@
       <div class="flex-1 py-6 px-3 space-y-2 overflow-y-auto custom-scrollbar" id="menu-container"></div>
       
       <!-- Sidebar User Profile & Logout -->
-      <div class="p-4 border-t border-slate-200 dark:border-slate-800">
-        <div class="flex items-center justify-between gap-2" id="sidebar-user">
-          <div class="flex items-center gap-3 overflow-hidden user-info-wrapper">
-            <div class="w-8 h-8 rounded-full bg-orange-100 dark:bg-orange-900 flex items-center justify-center shrink-0 border-2 border-orange-500 text-orange-600 dark:text-orange-400 font-bold text-sm">JL</div>
-            <div class="overflow-hidden user-details flex flex-col">
-              <p class="text-xs font-bold truncate text-slate-800 dark:text-white">Jakkrit Latthawanichphan</p>
-              <p class="text-[10px] font-medium truncate text-slate-500 dark:text-slate-400">Transport</p>
+        <div class="p-4 border-t border-slate-200 dark:border-slate-800 font-sans">
+          <div class="flex items-center justify-between gap-2" id="sidebar-user">
+            <div class="flex items-center gap-3 overflow-hidden user-info-wrapper">
+              
+              <!-- 💡 1. รูป/ตัวย่อชื่อ (Initials) -->
+              <div id="user-avatar-initials" 
+                  class="w-8 h-8 rounded-full bg-orange-100 dark:bg-orange-950/60 flex items-center justify-center shrink-0 border-2 border-orange-500 text-orange-600 dark:text-orange-400 font-extrabold text-xs uppercase shadow-sm">
+                --
+              </div>
+              
+              <!-- 💡 2. ชื่อผู้ใช้ และ แผนก/อีเมล -->
+              <div class="overflow-hidden user-details flex flex-col">
+                <p id="user-display-name" class="text-xs font-bold truncate text-slate-800 dark:text-white" title="Loading...">
+                  กำลังโหลด...
+                </p>
+                <p id="user-display-role" class="text-[10px] font-medium truncate text-slate-500 dark:text-slate-400">
+                  Microsoft Account
+                </p>
+              </div>
+
             </div>
+
+            <!-- 💡 3. ปุ่ม Logout -->
+            <button id="btn-logout" type="button" title="Log out" 
+                    class="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer">
+              <i data-lucide="log-out" class="w-4 h-4"></i>
+            </button>
           </div>
-          <button id="btn-logout" title="Log out" class="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0">
-            <i data-lucide="log-out" class="w-4 h-4"></i>
-          </button>
         </div>
-      </div>
     </aside>
 
     <!-- Main Content Area -->
@@ -1069,9 +1084,11 @@
   </div>
 
   <!-- Scripts Loading Sequence -->
-  <script src="js/config.js"></script>
-  <script src="js/api.js"></script>
-  <script src="js/map.js"></script>
-  <script src="js/app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script src="auth.js"></script>
+<script src="map.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
