@@ -426,13 +426,14 @@ function calculateExecAnalytics(routeData) {
   return result;
 }
 
+
 function updateExecAdvancedAnalytics(routeData) {
   if (!routeData || routeData.length === 0) return;
 
   const data = calculateExecAnalytics(routeData);
 
   renderExecTopKPIs(data);
-  renderExecZoneSummaryList(data.zoneSummaryMap);
+  renderExecZoneSummaryList(data.zoneSummaryMap, routeData);
   renderExecTruckAvailList(data.truckAvailMap);
   renderExecCarrierCapacity(data.carrierAvailMap, data.allRoutesList);
 }
@@ -540,6 +541,16 @@ function renderExecTruckAvailList(truckAvailMap) {
     availRatio: stat.totalRoutes > 0 ? (stat.availRoutes / stat.totalRoutes) * 100 : 0
   })).sort((a, b) => b.availRoutes - a.availRoutes);
 
+  // 💡 กรณีตัวกรองจังหวัดที่เลือก ไม่มีข้อมูลประเภทรถ
+  if (sortedTrucks.length === 0) {
+    truckListEl.innerHTML = `
+      <div class="col-span-full py-8 text-center text-xs text-slate-400 font-sans border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-zinc-900/50">
+        ไม่พบข้อมูลประเภทรถสำหรับจังหวัดที่เลือก
+      </div>
+    `;
+    return;
+  }
+
   truckListEl.innerHTML = sortedTrucks.map(item => {
     const color = getAvailColorScale(item.availRatio);
     const radius = 18;
@@ -585,6 +596,7 @@ function renderExecTruckAvailList(truckAvailMap) {
       </div>
     `;
   }).join('');
+
   if (typeof lucide !== 'undefined') lucide.createIcons({ root: truckListEl });
 }
 
@@ -722,8 +734,10 @@ function updateExecNewOrderMappingSection(customData = null) {
   `).join('');
 }
 
-function renderExecZoneSummaryList(zoneSummaryMap) {
-  updateExecNewOrderMappingSection();
+function renderExecZoneSummaryList(zoneSummaryMap, sourceRoutes = null) {
+  if (sourceRoutes) {
+    updateExecNewOrderMappingSection(sourceRoutes);
+  }
 }
 
 // ==============================================================================
@@ -792,12 +806,18 @@ function applyExecProvinceFilter() {
     });
   }
 
+  // 1. อัปเดตการ์ดสรุปรายโซน (Regional Summary Cards)
   updateExecNewOrderMappingSection(filteredRoutes);
 
+  // 💡 2. อัปเดตสถิติประเภทรถ (Truck Types), KPIs และ Carriers ให้ล้อตามจังหวัดที่เลือก
+  updateExecAdvancedAnalytics(filteredRoutes);
+
+  // 3. อัปเดตแผนที่ Choropleth Heatmap
   if (typeof renderExecRouteHeatmap === 'function') {
     renderExecRouteHeatmap(filteredRoutes);
   }
 
+  // 4. อัปเดตตารางเจาะลึกด้านล่าง (ถ้าเปิดอยู่)
   const detailPanel = document.getElementById('exec-zone-detail-panel');
   if (detailPanel && !detailPanel.classList.contains('hidden')) {
     const currentZone = document.getElementById('exec-selected-zone-name')?.innerText || '';
@@ -2096,46 +2116,77 @@ window.exportFilteredDataToCSV = function() {
   showToast(`Exported ${dataToExport.length.toLocaleString()} routes successfully`);
 };
 
-function setupEventListeners() {
-  document.getElementById('btn-login-ms')?.addEventListener('click', async () => {
-  const btn = document.getElementById('btn-login-ms');
-  const loginScreen = document.getElementById('login-screen');
-  const app = document.getElementById('main-app');
+// ==============================================================================
+// LOGIN BUTTON STATE HELPER (INLINE SVG - OFFLINE READY)
+// ==============================================================================
+const MS_ICON_SVG = `
+  <svg class="w-5 h-5 shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="0" y="0" width="10" height="10" fill="#F25022"/>
+    <rect x="11" y="0" width="10" height="10" fill="#7FBA00"/>
+    <rect x="0" y="11" width="10" height="10" fill="#00A4EF"/>
+    <rect x="11" y="11" width="10" height="10" fill="#FFB900"/>
+  </svg>
+`;
 
-  if (btn) {
+/**
+ * ฟังก์ชันควบคุมสถานะและการเรนเดอร์ไอคอนของปุ่ม Login จากศูนย์กลาง
+ * @param {'idle' | 'loading'} state - สถานะของปุ่ม
+ */
+function setLoginButtonState(state = 'idle') {
+  const btn = document.getElementById('btn-login-ms');
+  if (!btn) return;
+
+  if (state === 'loading') {
+    btn.disabled = true;
     btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 shrink-0 animate-spin text-orange-500"></i> <span>Authenticating...</span>`;
     if (typeof lucide !== 'undefined') lucide.createIcons({ root: btn });
-  }
-
-  if (loginScreen) {
-    loginScreen.classList.add('opacity-0', 'pointer-events-none');
-    setTimeout(() => loginScreen.classList.add('hidden'), 500);
-  }
-  if (app) {
-    app.classList.remove('hidden');
-    setTimeout(() => app.classList.remove('opacity-0', 'pointer-events-none'), 50);
-  }
-  await initAppAfterLogin();
-});
-
-// 2. 💡 ปุ่ม Logout (ต้องคืนค่าแท็ก <img> กลับมา ไม่เขียนทับด้วยข้อความเปล่า)
-document.getElementById('btn-logout')?.addEventListener('click', () => {
-  const app = document.getElementById('main-app');
-  const loginScreen = document.getElementById('login-screen');
-  if (app) app.classList.add('hidden', 'opacity-0', 'pointer-events-none');
-  if (loginScreen) loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
-
-  const btnLogin = document.getElementById('btn-login-ms');
-  if (btnLogin) {
-    // 💡 คืนรูปภาพไอคอน Microsoft และข้อความกลับมาครบถ้วน
-    btnLogin.innerHTML = `
-      <img src="https://authjs.dev/img/providers/microsoft.svg" alt="Microsoft" class="w-5 h-5 shrink-0 group-hover:scale-110 transition-transform" />
+  } else {
+    btn.disabled = false;
+    btn.innerHTML = `
+      ${MS_ICON_SVG}
       <span id="btn-login-ms-text">Sign in with Microsoft</span>
     `;
   }
-  showToast('You have successfully logged out.');
-});
+}
 
+// ==============================================================================
+// 10. EVENT LISTENERS CONTROLLER (CLEAN & REFACTORED)
+// ==============================================================================
+function setupEventListeners() {
+  // 1. เรนเดอร์ปุ่ม Login เริ่มต้นพร้อมไอคอน Microsoft อัตโนมัติ
+  setLoginButtonState('idle');
+
+  // 2. จัดการ Event การล็อกอิน
+  document.getElementById('btn-login-ms')?.addEventListener('click', async () => {
+    const loginScreen = document.getElementById('login-screen');
+    const app = document.getElementById('main-app');
+
+    setLoginButtonState('loading');
+
+    if (loginScreen) {
+      loginScreen.classList.add('opacity-0', 'pointer-events-none');
+      setTimeout(() => loginScreen.classList.add('hidden'), 500);
+    }
+    if (app) {
+      app.classList.remove('hidden');
+      setTimeout(() => app.classList.remove('opacity-0', 'pointer-events-none'), 50);
+    }
+    await initAppAfterLogin();
+  });
+
+  // 3. จัดการ Event การออกจากระบบ (คืนค่าปุ่ม Login พร้อมไอคอนกลับมา)
+  document.getElementById('btn-logout')?.addEventListener('click', () => {
+    const app = document.getElementById('main-app');
+    const loginScreen = document.getElementById('login-screen');
+
+    if (app) app.classList.add('hidden', 'opacity-0', 'pointer-events-none');
+    if (loginScreen) loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+
+    setLoginButtonState('idle');
+    showToast('You have successfully logged out.');
+  });
+
+  // 4. ตัวกรองค้นหาข้อความ (Debounce 300ms)
   const searchInput = document.querySelector('#filters-content input[type="text"]');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
@@ -2144,6 +2195,7 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
     });
   }
 
+  // 5. ตัวกรองตัวเลข (Debounce 250ms แยกอิสระ)
   const numericFilterIds = ['filter-backhaul-min', 'filter-backhaul-max', 'filter-min-avail-trips'];
   numericFilterIds.forEach(id => {
     const el = document.getElementById(id);
@@ -2156,6 +2208,7 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
     }
   });
 
+  // 6. สลับโหมดการแสดงผล Segmented Control
   document.querySelectorAll('#display-mode-segmented .mode-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const selectedBtn = e.currentTarget;
@@ -2169,6 +2222,7 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
     });
   });
 
+  // 7. พับ/กางแถบ Sidebar
   document.getElementById('toggle-sidebar')?.addEventListener('click', () => {
     state.isSidebarOpen = !state.isSidebarOpen;
     const sb = document.getElementById('sidebar');
@@ -2197,6 +2251,7 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
     }, 310);
   });
 
+  // 8. พับ/กางตารางข้อมูลด้านล่าง
   document.getElementById('toggle-table')?.addEventListener('click', () => {
     state.isTableExpanded = !state.isTableExpanded;
     const tc = document.getElementById('table-container');
@@ -2212,6 +2267,7 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
     if (typeof dashMap !== 'undefined' && dashMap) setTimeout(() => dashMap.invalidateSize(), 300);
   });
 
+  // 9. พับ/กางแถบตัวกรองหลัก (Main Filter)
   document.getElementById('toggle-filters-main')?.addEventListener('click', () => {
     const content = document.getElementById('filters-content');
     const chevron = document.getElementById('filters-main-chevron');
@@ -2224,6 +2280,7 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
     }
   });
 
+  // 10. Accordion ของกลุ่มตัวกรองย่อย
   document.querySelectorAll('.filter-accordion-toggle').forEach(toggleBtn => {
     toggleBtn.addEventListener('click', () => {
       const targetEl = document.getElementById(toggleBtn.getAttribute('data-target'));
@@ -2238,12 +2295,14 @@ document.getElementById('btn-logout')?.addEventListener('click', () => {
     });
   });
 
+  // 11. ปิด Custom Dropdown เมื่อคลิกพื้นที่อื่นภายนอก
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.custom-select-container')) {
       document.querySelectorAll('.custom-select-dropdown').forEach(el => el.classList.add('hidden'));
     }
   });
 
+  // 12. ปุ่มสลับ Dark / Light Theme
   document.getElementById('btn-theme-toggle')?.addEventListener('click', toggleDarkMode);
 }
 
