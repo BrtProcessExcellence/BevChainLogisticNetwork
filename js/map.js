@@ -443,11 +443,26 @@ async function renderExecRouteHeatmap(data) {
 }
 
 // ==============================================================================
-// 5. DASHBOARD ROUTE MAP RENDERING (FIXED CANVAS RENDERER)
+// 5. DASHBOARD ROUTE MAP RENDERING (ORIGINAL CURVED ARCS + DC PINS + DOTS)
 // ==============================================================================
-function drawDashboardRoutes(filteredData = []) {
-  if (!dashMap) return;
 
+function updateMapDisplay(filteredData) {
+  if (typeof dashMap === 'undefined' || !dashMap) return;
+
+  if (!dashMap._loaded) {
+    dashMap.whenReady(() => {
+      drawDashboardRoutes(filteredData);
+    });
+    return;
+  }
+
+  drawDashboardRoutes(filteredData);
+}
+
+function drawDashboardRoutes(filteredData = []) {
+  if (typeof dashMap === 'undefined' || !dashMap) return;
+
+  // 1. จัดการ LayerGroup หลัก
   if (dashLayerGrp) {
     dashLayerGrp.clearLayers();
   } else {
@@ -459,10 +474,18 @@ function drawDashboardRoutes(filteredData = []) {
 
   if (!filteredData || filteredData.length === 0) return;
 
+  // 2. ตรวจสอบ Container ของแผนที่
+  const mapContainer = dashMap.getContainer();
+  if (mapContainer && (mapContainer.offsetWidth === 0 || mapContainer.offsetHeight === 0)) {
+    dashMap.invalidateSize();
+  }
+
+  // 💡 3. วาดป้ายหมุดต้นทาง DC (LPRDC, MSB, UBN, SRB, HY ฯลฯ)
   if (typeof renderUniqueDCPins === 'function') {
     renderUniqueDCPins(filteredData, dashMap, dashLayerGrp);
   }
 
+  // 4. รวมกลุ่มข้อมูลเส้นทาง (Aggregate Routes)
   const routeMap = {};
   let maxTrips = 0;
 
@@ -518,12 +541,15 @@ function drawDashboardRoutes(filteredData = []) {
   const allBoundsPoints = [];
   const isDarkTheme = isDarkMode();
 
+  // 💡 5. วาดเส้นทางแบบเส้นโค้ง (Arc) พร้อมจุดปลายทาง (Dot)
   Object.values(routeMap).forEach((route, index) => {
     const originCoords = resolveLocationCoords(route.from);
     const destCoords = resolveDestinationCoords(route.rawRow || {
       'Description(Ship-To (Outbound))': route.to,
       'จังหวัด': route.province,
-      'Ship-To (Outbound)': route.shipToCode
+      'Ship-To (Outbound)': route.shipToCode,
+      dest_lat: route.rawRow?.dest_lat,
+      dest_lng: route.rawRow?.dest_lng
     });
 
     if (!originCoords || !destCoords || 
@@ -535,7 +561,7 @@ function drawDashboardRoutes(filteredData = []) {
     allBoundsPoints.push(originCoords, destCoords);
 
     const densityRatio = Math.sqrt(route.totalTrips / (maxTrips || 1));
-    const lineWeight = Math.max(1.8, Math.min(2.5, 1.6 + densityRatio * 0.9));
+    const lineWeight = Math.max(1.8, Math.min(2.8, 1.6 + densityRatio * 1.0));
     const lineOpacity = 0.92;
 
     const avgAvailPct = route.totalTrips > 0
@@ -563,15 +589,16 @@ function drawDashboardRoutes(filteredData = []) {
       ? carriersList.map(c => `<div class="text-slate-800 dark:text-slate-200 font-bold leading-snug break-words text-right">• ${c}</div>`).join('')
       : '<span class="text-slate-400 text-right">-</span>';
 
-    const curveOffset = 0.12 * (index % 2 === 0 ? 1 : -1);
+    // 💡 คำนวณจุดดัดให้เส้นโค้ง (Bezier Arc)
+    const curveOffset = 0.14 * (index % 2 === 0 ? 1 : -1);
     const curvePoints = getCurvePoints(originCoords[0], originCoords[1], destCoords[0], destCoords[1], curveOffset);
 
-    // 1. เส้นขอบเงา (Casing) ช่วยให้เส้นลอยเด่นขึ้นจากพื้นหลังแผนที่
+    // 1. เส้นขอบเงา Casing สีขาว/เข้ม (ช่วยให้เส้นซ้อนกันแล้วดูมีมิติ)
     const shadowPolyline = L.polyline(curvePoints, {
       renderer: routeCanvasRenderer,
       color: isDarkTheme ? '#020617' : '#ffffff',
-      weight: lineWeight + 1.4,
-      opacity: isDarkTheme ? 0.45 : 0.65,
+      weight: lineWeight + 1.6,
+      opacity: isDarkTheme ? 0.45 : 0.7,
       interactive: false
     }).addTo(dashLayerGrp);
 
@@ -586,14 +613,14 @@ function drawDashboardRoutes(filteredData = []) {
       pane: 'routePane'
     }).addTo(dashLayerGrp);
 
-    // 3. จุดปลายทาง (Destination Dot) ขนาดพอดีกับปลายเส้น
+    // 3. จุดกลมปลายทาง (Destination Dot Marker)
     const destDotMarker = L.circleMarker(destCoords, {
       renderer: dotCanvasRenderer,
-      radius: 3.0,          // 💡 ขนาดสมส่วนพอดี (ไม่เล็กเกินไป)
+      radius: 3.2,
       fillColor: lineColor,
-      fillOpacity: 1.0,     // สีทึบชัดเจน
-      color: '#ffffff',     // ขอบขาวตัดพื้นหลัง
-      weight: 1.2,          // ขอบบางคมชัด
+      fillOpacity: 1.0,
+      color: '#ffffff',
+      weight: 1.2,
       opacity: 1.0,
       pane: 'destDotPane'
     }).addTo(dashLayerGrp);
@@ -1078,79 +1105,4 @@ function renderHeatmap(filteredData, metric, themeKey, radius) {
       pane: 'heatPane'
     }).addTo(dashMap);
   }
-}
-
-let dashboardRoutesLayerGroup = null;
-
-function updateMapDisplay(filteredData) {
-  // 1. ตรวจสอบว่าตัวแปร Map มีอยู่จริงหรือไม่
-  if (typeof dashMap === 'undefined' || !dashMap) return;
-
-  // 2. ถ้า Map ยังโหลดไม่เสร็จ ให้รอจนกว่า Map จะพร้อม (whenReady)
-  if (!dashMap._loaded) {
-    dashMap.whenReady(() => {
-      drawDashboardRoutes(filteredData);
-    });
-    return;
-  }
-
-  drawDashboardRoutes(filteredData);
-}
-
-function drawDashboardRoutes(routes) {
-  if (typeof dashMap === 'undefined' || !dashMap || !dashMap._loaded) return;
-
-  // 1. สร้าง LayerGroup เพียงครั้งเดียว ป้องกัน Canvas Renderer หลุด
-  if (!dashboardRoutesLayerGroup) {
-    dashboardRoutesLayerGroup = L.layerGroup().addTo(dashMap);
-  } else {
-    // ล้างเลเยอร์เดิมอย่างปลอดภัย
-    dashboardRoutesLayerGroup.clearLayers();
-  }
-
-  if (!routes || routes.length === 0) return;
-
-  // 2. ตรวจสอบว่า Container แสดงผลอยู่หรือไม่ก่อนวาด (ป้องกัน Context เป็น null)
-  const mapContainer = dashMap.getContainer();
-  if (mapContainer.offsetWidth === 0 || mapContainer.offsetHeight === 0) {
-    dashMap.invalidateSize();
-  }
-
-  // 💡 3. วาดเส้นทางและหมุดลง LayerGroup อย่างปลอดภัย
-  routes.forEach(row => {
-    const p = row._parsed;
-    const originName = p ? p.cleanOrigin : cleanAllSpaces(row.origin || row['ต้นทาง'] || '');
-    const destName = p ? p.cleanShipTo : cleanAllSpaces(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '');
-
-    const originLoc = window.originLocationMap ? (window.originLocationMap[originName] || window.originLocationMap[row.origin]) : null;
-    const destLoc = (window.shipToLocationMap && window.shipToLocationMap[destName]) 
-      ? window.shipToLocationMap[destName] 
-      : (window.provinceLocationMap ? window.provinceLocationMap[row.province || row['จังหวัด']] : null);
-
-    // ตรวจสอบพิกัดปลายทาง
-    const destLat = parseFloat(row.dest_lat || destLoc?.lat);
-    const destLng = parseFloat(row.dest_lng || destLoc?.lng);
-
-    if (!originLoc || isNaN(originLoc.lat) || isNaN(originLoc.lng) || isNaN(destLat) || isNaN(destLng)) {
-      return; // ข้ามแถวที่พิกัดไม่สมบูรณ์
-    }
-
-    const latlngs = [
-      [originLoc.lat, originLoc.lng],
-      [destLat, destLng]
-    ];
-
-    const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
-    const colorScale = getAvailColorScale(availPct);
-
-    // สร้าง Polyline โดยกำหนด renderer ป้องกันการชนกันของ context
-    const polyline = L.polyline(latlngs, {
-      color: colorScale.hex || '#f97316',
-      weight: 2,
-      opacity: 0.65,
-      smoothFactor: 1
-    });
-
-    polyline.addTo(dashboardRoutesLayerGroup);
-  });
 }
