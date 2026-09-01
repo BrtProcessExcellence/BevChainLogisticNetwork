@@ -1040,12 +1040,15 @@ async function applyDynamicFilters() {
 
   clearTimeout(mapRenderDebounceTimer);
   mapRenderDebounceTimer = setTimeout(() => {
+
+  if (state.activeMenuId === 'dashboard') {
     if (typeof updateMapDisplay === 'function') {
       updateMapDisplay(filteredData);
     } else if (typeof drawDashboardRoutes === 'function') {
       drawDashboardRoutes(filteredData);
     }
-  }, 120);
+  }
+}, 120);
 }
 
 function resetMapFilters() {
@@ -1269,10 +1272,12 @@ function renderTable(filteredData = []) {
           <div class="text-[10px] text-slate-400">Zone: ${escapeHtml(grp.zone)}</div>
         </td>
         <td class="p-3 max-w-[200px]">
-          <div class="font-bold text-slate-800 dark:text-slate-200 truncate" title="${escapeAttr(grp.customerName)}">
-            ${escapeHtml(grp.customerName)} <span class="font-normal text-[10px] text-slate-400">(${escapeHtml(grp.customerType)})</span>
+          <div class="font-bold text-slate-800 dark:text-slate-200 truncate" title="${escapeAttr(grp.customerType)}">
+            ${escapeHtml(grp.customerType)}
           </div>
-          <div class="text-[10px] text-slate-400 truncate mt-0.5" title="${escapeAttr(grp.productCat)}">${escapeHtml(grp.productCat)}</div>
+          <div class="text-[10px] text-slate-400 truncate mt-0.5" title="${escapeAttr(grp.productCat)}">
+            ${escapeHtml(grp.productCat)}
+          </div>
         </td>
         <td class="p-3 whitespace-nowrap">
           <div class="font-semibold text-blue-600 dark:text-blue-400">${escapeHtml(grp.truckType)}</div>

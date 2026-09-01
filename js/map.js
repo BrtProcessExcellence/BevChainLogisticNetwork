@@ -1080,27 +1080,77 @@ function renderHeatmap(filteredData, metric, themeKey, radius) {
   }
 }
 
+let dashboardRoutesLayerGroup = null;
+
 function updateMapDisplay(filteredData) {
-  if (!dashMap) return;
-  initMapPanes(dashMap);
-  updateMapTiles();
+  // 1. ตรวจสอบว่าตัวแปร Map มีอยู่จริงหรือไม่
+  if (typeof dashMap === 'undefined' || !dashMap) return;
 
-  const mode = (typeof state !== 'undefined' && state?.activeFilters?.displayMode) || 'routes';
-  const metric = (typeof state !== 'undefined' && state?.activeFilters?.heatMetric) || 'volume';
-  const theme = (typeof state !== 'undefined' && state?.activeFilters?.heatTheme) || 'thermal';
-  const radius = (typeof state !== 'undefined' && state?.activeFilters?.heatRadius) || 35;
-
-  if (mode === 'routes') {
-    drawDashboardRoutes(filteredData);
-    if (currentHeatLayer && dashMap) {
-      dashMap.removeLayer(currentHeatLayer);
-      currentHeatLayer = null;
-    }
-  } else if (mode === 'heatmap') {
-    if (dashLayerGrp) dashLayerGrp.clearLayers();
-    renderHeatmap(filteredData, metric, theme, radius);
-  } else if (mode === 'hybrid') {
-    drawDashboardRoutes(filteredData);
-    renderHeatmap(filteredData, metric, theme, radius);
+  // 2. ถ้า Map ยังโหลดไม่เสร็จ ให้รอจนกว่า Map จะพร้อม (whenReady)
+  if (!dashMap._loaded) {
+    dashMap.whenReady(() => {
+      drawDashboardRoutes(filteredData);
+    });
+    return;
   }
+
+  drawDashboardRoutes(filteredData);
+}
+
+function drawDashboardRoutes(routes) {
+  if (typeof dashMap === 'undefined' || !dashMap || !dashMap._loaded) return;
+
+  // 1. สร้าง LayerGroup เพียงครั้งเดียว ป้องกัน Canvas Renderer หลุด
+  if (!dashboardRoutesLayerGroup) {
+    dashboardRoutesLayerGroup = L.layerGroup().addTo(dashMap);
+  } else {
+    // ล้างเลเยอร์เดิมอย่างปลอดภัย
+    dashboardRoutesLayerGroup.clearLayers();
+  }
+
+  if (!routes || routes.length === 0) return;
+
+  // 2. ตรวจสอบว่า Container แสดงผลอยู่หรือไม่ก่อนวาด (ป้องกัน Context เป็น null)
+  const mapContainer = dashMap.getContainer();
+  if (mapContainer.offsetWidth === 0 || mapContainer.offsetHeight === 0) {
+    dashMap.invalidateSize();
+  }
+
+  // 💡 3. วาดเส้นทางและหมุดลง LayerGroup อย่างปลอดภัย
+  routes.forEach(row => {
+    const p = row._parsed;
+    const originName = p ? p.cleanOrigin : cleanAllSpaces(row.origin || row['ต้นทาง'] || '');
+    const destName = p ? p.cleanShipTo : cleanAllSpaces(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '');
+
+    const originLoc = window.originLocationMap ? (window.originLocationMap[originName] || window.originLocationMap[row.origin]) : null;
+    const destLoc = (window.shipToLocationMap && window.shipToLocationMap[destName]) 
+      ? window.shipToLocationMap[destName] 
+      : (window.provinceLocationMap ? window.provinceLocationMap[row.province || row['จังหวัด']] : null);
+
+    // ตรวจสอบพิกัดปลายทาง
+    const destLat = parseFloat(row.dest_lat || destLoc?.lat);
+    const destLng = parseFloat(row.dest_lng || destLoc?.lng);
+
+    if (!originLoc || isNaN(originLoc.lat) || isNaN(originLoc.lng) || isNaN(destLat) || isNaN(destLng)) {
+      return; // ข้ามแถวที่พิกัดไม่สมบูรณ์
+    }
+
+    const latlngs = [
+      [originLoc.lat, originLoc.lng],
+      [destLat, destLng]
+    ];
+
+    const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0));
+    const colorScale = getAvailColorScale(availPct);
+
+    // สร้าง Polyline โดยกำหนด renderer ป้องกันการชนกันของ context
+    const polyline = L.polyline(latlngs, {
+      color: colorScale.hex || '#f97316',
+      weight: 2,
+      opacity: 0.65,
+      smoothFactor: 1
+    });
+
+    polyline.addTo(dashboardRoutesLayerGroup);
+  });
 }
