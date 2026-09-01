@@ -443,7 +443,7 @@ async function renderExecRouteHeatmap(data) {
 }
 
 // ==============================================================================
-// 5. DASHBOARD ROUTE MAP RENDERING (ORIGINAL CURVED ARCS + DC PINS + DOTS)
+// 5. DASHBOARD ROUTE & HEATMAP VISUALIZATION CONTROLLER (SYNCHRONIZED)
 // ==============================================================================
 
 function updateMapDisplay(filteredData) {
@@ -451,18 +451,50 @@ function updateMapDisplay(filteredData) {
 
   if (!dashMap._loaded) {
     dashMap.whenReady(() => {
-      drawDashboardRoutes(filteredData);
+      renderDashboardLayersByMode(filteredData);
     });
     return;
   }
 
+  renderDashboardLayersByMode(filteredData);
+}
+
+function renderDashboardLayersByMode(filteredData = []) {
+  if (!dashMap) return;
+
+  const displayMode = (typeof state !== 'undefined' && state?.activeFilters?.displayMode) || 'routes';
+  const metric = (typeof state !== 'undefined' && state?.activeFilters?.heatMetric) || 'volume';
+  const theme = (typeof state !== 'undefined' && state?.activeFilters?.heatTheme) || 'thermal';
+  const radius = (typeof state !== 'undefined' && state?.activeFilters?.heatRadius) || 35;
+
+  // 1. โหมด Heatmap อย่างเดียว: ซ่อนเส้นทาง แล้ววาดเฉพาะความร้อน
+  if (displayMode === 'heatmap') {
+    if (dashLayerGrp) dashLayerGrp.clearLayers();
+    if (typeof renderUniqueDCPins === 'function') {
+      renderUniqueDCPins(filteredData, dashMap, dashLayerGrp);
+    }
+    renderHeatmap(filteredData, metric, theme, radius);
+    return;
+  }
+
+  // 2. โหมด Hybrid: วาดทั้งเส้นทาง และความร้อน Heatmap ซ้อนกัน
+  if (displayMode === 'hybrid') {
+    drawDashboardRoutes(filteredData);
+    renderHeatmap(filteredData, metric, theme, radius);
+    return;
+  }
+
+  // 3. โหมด Routes (ค่าเริ่มต้น): วาดเฉพาะเส้นทาง และล้าง Heatmap ออก
+  if (currentHeatLayer && dashMap) {
+    dashMap.removeLayer(currentHeatLayer);
+    currentHeatLayer = null;
+  }
   drawDashboardRoutes(filteredData);
 }
 
 function drawDashboardRoutes(filteredData = []) {
   if (typeof dashMap === 'undefined' || !dashMap) return;
 
-  // 1. จัดการ LayerGroup หลัก
   if (dashLayerGrp) {
     dashLayerGrp.clearLayers();
   } else {
@@ -474,18 +506,16 @@ function drawDashboardRoutes(filteredData = []) {
 
   if (!filteredData || filteredData.length === 0) return;
 
-  // 2. ตรวจสอบ Container ของแผนที่
   const mapContainer = dashMap.getContainer();
   if (mapContainer && (mapContainer.offsetWidth === 0 || mapContainer.offsetHeight === 0)) {
     dashMap.invalidateSize();
   }
 
-  // 💡 3. วาดป้ายหมุดต้นทาง DC (LPRDC, MSB, UBN, SRB, HY ฯลฯ)
+  // วาดป้ายหมุดต้นทาง DC
   if (typeof renderUniqueDCPins === 'function') {
     renderUniqueDCPins(filteredData, dashMap, dashLayerGrp);
   }
 
-  // 4. รวมกลุ่มข้อมูลเส้นทาง (Aggregate Routes)
   const routeMap = {};
   let maxTrips = 0;
 
@@ -541,7 +571,6 @@ function drawDashboardRoutes(filteredData = []) {
   const allBoundsPoints = [];
   const isDarkTheme = isDarkMode();
 
-  // 💡 5. วาดเส้นทางแบบเส้นโค้ง (Arc) พร้อมจุดปลายทาง (Dot)
   Object.values(routeMap).forEach((route, index) => {
     const originCoords = resolveLocationCoords(route.from);
     const destCoords = resolveDestinationCoords(route.rawRow || {
@@ -589,11 +618,10 @@ function drawDashboardRoutes(filteredData = []) {
       ? carriersList.map(c => `<div class="text-slate-800 dark:text-slate-200 font-bold leading-snug break-words text-right">• ${c}</div>`).join('')
       : '<span class="text-slate-400 text-right">-</span>';
 
-    // 💡 คำนวณจุดดัดให้เส้นโค้ง (Bezier Arc)
     const curveOffset = 0.14 * (index % 2 === 0 ? 1 : -1);
     const curvePoints = getCurvePoints(originCoords[0], originCoords[1], destCoords[0], destCoords[1], curveOffset);
 
-    // 1. เส้นขอบเงา Casing สีขาว/เข้ม (ช่วยให้เส้นซ้อนกันแล้วดูมีมิติ)
+    // 1. เส้นขอบเงา Casing
     const shadowPolyline = L.polyline(curvePoints, {
       renderer: routeCanvasRenderer,
       color: isDarkTheme ? '#020617' : '#ffffff',
@@ -602,7 +630,7 @@ function drawDashboardRoutes(filteredData = []) {
       interactive: false
     }).addTo(dashLayerGrp);
 
-    // 2. เส้นทางหลัก (Main Arc)
+    // 2. เส้นทางหลัก
     const mainPolyline = L.polyline(curvePoints, {
       renderer: routeCanvasRenderer,
       color: lineColor,
@@ -613,7 +641,7 @@ function drawDashboardRoutes(filteredData = []) {
       pane: 'routePane'
     }).addTo(dashLayerGrp);
 
-    // 3. จุดกลมปลายทาง (Destination Dot Marker)
+    // 3. จุดปลายทาง
     const destDotMarker = L.circleMarker(destCoords, {
       renderer: dotCanvasRenderer,
       radius: 3.2,
