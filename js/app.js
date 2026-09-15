@@ -1202,17 +1202,35 @@ function renderTable(filteredData = []) {
   const totalRouteGroups = routeKeys.length;
   const availPct = totalRouteGroups > 0 ? ((availRouteGroupsCount / totalRouteGroups) * 100).toFixed(1) : '0.0';
 
-  // เรียงลำดับจาก % ว่างมากไปน้อย (และตามด้วยเที่ยวว่าง)
-  routeKeys.sort((a, b) => {
-    const availA = Number(groupedRoutes[a]?.availablePct || 0);
-    const availB = Number(groupedRoutes[b]?.availablePct || 0);
-    if (availB !== availA) {
-      return availB - availA;
-    }
-    const tripsA = Number(groupedRoutes[a]?.totalAvailTrips || 0);
-    const tripsB = Number(groupedRoutes[b]?.totalAvailTrips || 0);
+  // // เรียงลำดับจาก % ว่างมากไปน้อย (และตามด้วยเที่ยวว่าง)
+  // routeKeys.sort((a, b) => {
+  //   const availA = Number(groupedRoutes[a]?.availablePct || 0);
+  //   const availB = Number(groupedRoutes[b]?.availablePct || 0);
+  //   if (availB !== availA) {
+  //     return availB - availA;
+  //   }
+  //   const tripsA = Number(groupedRoutes[a]?.totalAvailTrips || 0);
+  //   const tripsB = Number(groupedRoutes[b]?.totalAvailTrips || 0);
+  //   return tripsB - tripsA;
+  // });
+
+routeKeys.sort((a, b) => {
+  const routeA = groupedRoutes[a];
+  const routeB = groupedRoutes[b];
+
+  // ดึงค่าเที่ยววิ่งรวมต่อสัปดาห์
+  const tripsA = Number(routeA?.totalTrips ?? routeA?.sumTripWeek ?? routeA?.tripsWeek ?? 0);
+  const tripsB = Number(routeB?.totalTrips ?? routeB?.sumTripWeek ?? routeB?.tripsWeek ?? 0);
+
+  // เรียงลำดับจากมากไปน้อย
+  if (tripsB !== tripsA) {
     return tripsB - tripsA;
-  });
+  }
+
+  // กรณีเที่ยววิ่งเท่ากัน 
+  return String(a).localeCompare(String(b), 'th');
+});
+  
 
   window.currentGroupKeys = routeKeys;
   window.currentGroupMap = groupedRoutes;
