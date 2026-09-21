@@ -10,11 +10,6 @@ let dashLayerGrp = null, simLayerGrp = null;
 let tileLayerObj = null, simTileLayer = null, execTileLayer = null;
 let currentHeatLayer = null, execGeoJsonLayer = null;
 
-let execGeoJsonLayerGroup = null; // ใช้ LayerGroup รวม เพื่อสั่ง clearLayers ได้ 100%
-let execRenderSequence = 0;       // ตัวนับลำดับป้องกัน Race Condition
-let execRenderDebounceTimer = null;
-let currentSelectedZone = null;
-
 // Canvas Renderers สำหรับเร่งความเร็ว
 let routeCanvasRenderer = null;
 let dotCanvasRenderer = null;
@@ -260,54 +255,94 @@ function resolveLocationCoords(locationKey) {
 }
 
 // ==============================================================================
-// 4. EXECUTIVE DASHBOARD CHOROPLETH (FIXED: NO LAYER STACKING & ACCURATE COLORS)
+// 4. EXECUTIVE DASHBOARD CHOROPLETH (ORIGINAL COLOR LOGIC + ZERO LAYER STACKING)
 // ==============================================================================
+
+let currentSelectedZone = null;
+let execRenderToken = 0; // ป้องกัน Race Condition และ Layer ซ้อนทับ
+
+async function loadThailandGeoJSON() {
+  if (cachedThailandGeoJSON) return cachedThailandGeoJSON;
+  if (geoJsonLoadingPromise) return geoJsonLoadingPromise;
+
+  geoJsonLoadingPromise = (async () => {
+    try {
+      const res = await fetch('./data/thailand.json');
+      if (res.ok) return (cachedThailandGeoJSON = await res.json());
+    } catch (e) {
+      console.warn('Local GeoJSON fallback to CDN...');
+    }
+
+    const cdnUrls = [
+      'https://cdn.jsdelivr.net/gh/apisit/thailand.json@master/thailand.json',
+      'https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json'
+    ];
+
+    for (const url of cdnUrls) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) return (cachedThailandGeoJSON = await res.json());
+      } catch (err) {
+        console.warn(`CDN failed: ${url}`);
+      }
+    }
+    throw new Error('Unable to load Thailand GeoJSON.');
+  })();
+
+  try {
+    return await geoJsonLoadingPromise;
+  } finally {
+    geoJsonLoadingPromise = null;
+  }
+}
+
 /**
- * คำนวณสีตามความจุว่างจริง (Weighted Average Backhaul %)
+ * กำหนดช่วงสีตามสัดส่วน % โค้ดเดิม
  */
 function getExecChoroplethColor(availPct) {
-  if (availPct === null || availPct === undefined || isNaN(availPct)) return '#94a3b8'; // สีเทา (ไม่มีข้อมูล)
+  if (availPct === null || availPct === undefined || isNaN(availPct)) return '#94a3b8'; // เทา (ไม่มีข้อมูล)
   const val = Number(availPct);
-  if (val === 0) return '#334155';   // งานเต็ม 100% (เทาเข้มอมดำ คมชัด ไม่กลืนกับแผนที่)
-  if (val <= 30) return '#ef4444';   // ว่างน้อย <= 30% (แดง)
-  if (val <= 70) return '#f97316';   // ว่างปานกลาง 31-70% (ส้ม)
-  return '#10b981';                  // ว่างมาก > 70% (เขียว)
+  if (val === 0) return '#000000';   // งานเต็ม 100% (ดำ)
+  if (val <= 30) return '#ef4444';   // แดง (<= 30%)
+  if (val <= 70) return '#f97316';   // ส้ม (31% - 70%)
+  return '#10b981';                  // เขียว (> 70%)
+}
+
+function normalizeProvName(name) {
+  if (!name || name === '-' || name === 'undefined') return '';
+  let str = String(name).trim();
+  if (['กรุงเทพฯ', 'กทม.', 'กทม', 'กรุงเทพ'].includes(str)) return 'กรุงเทพมหานคร';
+  return str;
+}
+
+function getProvinceStat(provMap, feature) {
+  if (!provMap || !feature) return null;
+  const rawGeoName = feature.properties?.name || feature.properties?.name_th || '';
+  const cleanGeo = cleanAllSpaces(rawGeoName);
+  const thaiName = typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName;
+  const cleanThai = cleanAllSpaces(thaiName);
+
+  return provMap[cleanGeo] || provMap[cleanThai] ||
+    Object.entries(provMap).find(([k]) => k.includes(cleanThai) || cleanThai.includes(k))?.[1] || null;
 }
 
 /**
- * ฟังก์ชันหลักในการเรนเดอร์แผนที่ พร้อมระบบ Debounce ป้องกันการโหลดซ้ำซ้อน
+ * เรนเดอร์แผนที่ด้วยตรรกะสีเดิม (ภาพที่ 1)
  */
-function renderExecRouteHeatmap(data) {
+async function renderExecRouteHeatmap(data) {
   if (!execMap) return;
 
-  // 💡 1. ตัดการโหลดรัว ๆ ซ้ำซ้อนด้วย Debounce 100ms
-  clearTimeout(execRenderDebounceTimer);
-  execRenderDebounceTimer = setTimeout(() => {
-    executeExecMapRender(data);
-  }, 100);
-}
-
-/**
- * ประมวลผลวาดเลเยอร์บนแผนที่อย่างปลอดภัย ไม่ซ้อนทับ
- */
-async function executeExecMapRender(data) {
-  if (!execMap) return;
-
-  // จัดการ LayerGroup หลัก
-  if (!execGeoJsonLayerGroup) {
-    execGeoJsonLayerGroup = L.layerGroup().addTo(execMap);
-  }
-
-  // 💡 2. กำหนด Render ID ประจำรอบ หากมีรอบใหม่ถูกสั่ง รอบเก่าจะถูกยกเลิกทันที
-  const thisRenderId = ++execRenderSequence;
+  const currentToken = ++execRenderToken;
   currentSelectedZone = null;
 
   if (!data || data.length === 0) {
-    execGeoJsonLayerGroup.clearLayers();
+    if (execGeoJsonLayer && execMap.hasLayer(execGeoJsonLayer)) {
+      execMap.removeLayer(execGeoJsonLayer);
+      execGeoJsonLayer = null;
+    }
     return;
   }
 
-  // 💡 3. คำนวณสัดส่วนความจุว่างจริง (Volume-Weighted Average Backhaul)
   const provMap = {};
 
   data.forEach(row => {
@@ -332,14 +367,12 @@ async function executeExecMapRender(data) {
         availRoutes: 0,
         totalTrips: 0,
         availTrips: 0,
-        sumAvailPct: 0,
         displayName: rawProv
       };
     }
 
     provMap[cleanProv].totalRoutes += 1;
     provMap[cleanProv].totalTrips += trips;
-    provMap[cleanProv].sumAvailPct += availPct;
 
     if (availPct > 0) {
       provMap[cleanProv].availRoutes += 1;
@@ -347,26 +380,28 @@ async function executeExecMapRender(data) {
     }
   });
 
-  // คำนวณค่า % ความจุว่างจริงถ่วงน้ำหนักตามเที่ยววิ่ง (ป้องกันเลขหลอกตา)
+  // 💡 จุดสำคัญ: คืนค่าสูตรตาม Code เดิม (นับสัดส่วนจากจำนวนเส้นทาง)
   Object.values(provMap).forEach(item => {
-    if (item.totalTrips > 0) {
-      item.zoneAvailPct = (item.availTrips / item.totalTrips) * 100;
-    } else {
-      item.zoneAvailPct = item.totalRoutes > 0 ? (item.sumAvailPct / item.totalRoutes) : 0;
-    }
+    item.zoneAvailPct = item.totalRoutes > 0 ? (item.availRoutes / item.totalRoutes) * 100 : 0;
     item.hasData = item.totalRoutes > 0;
   });
 
   try {
     const geoData = await loadThailandGeoJSON();
 
-    // 💡 4. ถ้ามีรอบใหม่อื่นแซงหน้าไปแล้ว ให้ยกเลิกรอบนี้ทันทีเพื่อไม่ให้ Layer ซ้อนกัน
-    if (thisRenderId !== execRenderSequence) return;
+    if (currentToken !== execRenderToken) return;
 
-    // เคลียร์เลเยอร์เก่าที่แสดงผลอยู่ทิ้งทั้งหมด 100%
-    execGeoJsonLayerGroup.clearLayers();
+    // เคลียร์เลเยอร์เก่าทิ้งทั้งหมดก่อนวาดใหม่
+    if (execGeoJsonLayer && execMap.hasLayer(execGeoJsonLayer)) {
+      execMap.removeLayer(execGeoJsonLayer);
+    }
+    execMap.eachLayer(layer => {
+      if (layer instanceof L.GeoJSON) {
+        execMap.removeLayer(layer);
+      }
+    });
 
-    const geoJsonLayer = L.geoJSON(geoData, {
+    execGeoJsonLayer = L.geoJSON(geoData, {
       style: (feature) => {
         const stat = getProvinceStat(provMap, feature);
         const availRatio = stat?.hasData ? stat.zoneAvailPct : null;
@@ -374,9 +409,9 @@ async function executeExecMapRender(data) {
         return {
           fillColor: getExecChoroplethColor(availRatio),
           weight: 1,
-          opacity: 0.85,
+          opacity: 0.9,
           color: '#ffffff',
-          fillOpacity: availRatio !== null ? 0.7 : 0.18 // ค่าความทึบแสงคงที่ ไม่มืดทึบ
+          fillOpacity: availRatio !== null ? 0.75 : 0.2 // สีสด คมชัดตามภาพที่ 1
         };
       },
       onEachFeature: (feature, layer) => {
@@ -390,15 +425,10 @@ async function executeExecMapRender(data) {
 
         const rawGeoName = feature.properties?.name || feature.properties?.name_th || '';
         const displayTitle = stat?.displayName || (typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName);
+        const baseColor = getExecChoroplethColor(hasData ? availPct : null);
 
-        // บันทึก Style เริ่มต้นที่ถูกต้องไว้ในตัว Polygon
-        layer.defaultStyle = {
-          fillColor: layer.options.fillColor,
-          weight: 1,
-          opacity: 0.85,
-          color: '#ffffff',
-          fillOpacity: layer.options.fillOpacity
-        };
+        layer._baseColor = baseColor;
+        layer._baseOpacity = hasData ? 0.75 : 0.2;
 
         layer.bindTooltip(`
           <div class="px-2.5 py-1.5 min-w-[200px] font-sans">
@@ -406,7 +436,7 @@ async function executeExecMapRender(data) {
             ${hasData ? `
               <div class="flex justify-between items-center mb-1">
                 <span class="text-slate-500 dark:text-slate-400 text-[11px]">Available Backhaul:</span>
-                <strong class="text-emerald-600 dark:text-emerald-400 font-extrabold text-xs">${availRoutes.toLocaleString()} routes (~${availPct.toFixed(1)}%)</strong>
+                <strong class="text-emerald-600 dark:text-emerald-400 font-extrabold text-xs">${availRoutes.toLocaleString()} routes (${availPct.toFixed(2)}%)</strong>
               </div>
               <div class="flex justify-between items-center text-[10px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
                 <span>Total Registered:</span>
@@ -425,15 +455,15 @@ async function executeExecMapRender(data) {
         layer.on({
           mouseover: (e) => {
             const l = e.target;
-            l.setStyle({ weight: 2.5, color: '#f97316', fillOpacity: 0.85 });
+            l.setStyle({ weight: 2.5, color: '#f97316', fillOpacity: 0.9 });
             l.bringToFront();
           },
           mouseout: (e) => {
+            if (!execGeoJsonLayer) return;
             const l = e.target;
             if (currentSelectedZone) {
-              const isMatch = l._isZoneMatch;
-              l.setStyle(isMatch ? {
-                fillColor: l.defaultStyle.fillColor,
+              l.setStyle(l._isZoneMatch ? {
+                fillColor: l._baseColor,
                 weight: 2.5,
                 color: '#f97316',
                 opacity: 1.0,
@@ -443,19 +473,21 @@ async function executeExecMapRender(data) {
                 weight: 0.8,
                 color: '#cbd5e1',
                 opacity: 0.35,
-                fillOpacity: 0.2
+                fillOpacity: 0.22
               });
             } else {
-              l.setStyle(l.defaultStyle);
+              l.setStyle({
+                fillColor: l._baseColor,
+                weight: 1,
+                color: '#ffffff',
+                opacity: 0.9,
+                fillOpacity: l._baseOpacity
+              });
             }
           }
         });
       }
-    });
-
-    // นำเข้า LayerGroup เดียว ไม่สร้างทับหลายชั้น
-    execGeoJsonLayerGroup.addLayer(geoJsonLayer);
-    window.execGeoJsonLayer = geoJsonLayer; // เก็บ reference สำหรับสั่ง highlight ภาค
+    }).addTo(execMap);
 
     execMap.off('click', resetExecMapHighlight);
     execMap.on('click', resetExecMapHighlight);
@@ -465,11 +497,12 @@ async function executeExecMapRender(data) {
   }
 }
 
-/**
- * ไฮไลต์ภาคและปรับจังหวัดอื่นเป็นสีเทาแบบโปร่งสะอาดตา
- */
+// ==============================================================================
+// REGION / ZONE HIGHLIGHT CONTROLLER
+// ==============================================================================
+
 function highlightRegionOnExecMap(targetZone, sourceData = null) {
-  if (!execMap || !window.execGeoJsonLayer) return;
+  if (!execMap || !execGeoJsonLayer) return;
 
   const cleanTargetZone = cleanAllSpaces(targetZone);
 
@@ -493,7 +526,7 @@ function highlightRegionOnExecMap(targetZone, sourceData = null) {
   const provList = Array.from(provincesInZone);
   const matchedBounds = [];
 
-  window.execGeoJsonLayer.eachLayer(layer => {
+  execGeoJsonLayer.eachLayer(layer => {
     const rawGeoName = layer.feature?.properties?.name || layer.feature?.properties?.name_th || '';
     const cleanGeo = cleanAllSpaces(rawGeoName);
     const thaiName = typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName;
@@ -507,7 +540,7 @@ function highlightRegionOnExecMap(targetZone, sourceData = null) {
 
     if (isMatch) {
       layer.setStyle({
-        fillColor: layer.defaultStyle.fillColor,
+        fillColor: layer._baseColor,
         weight: 2.5,
         color: '#f97316',
         opacity: 1.0,
@@ -518,10 +551,10 @@ function highlightRegionOnExecMap(targetZone, sourceData = null) {
     } else {
       layer.setStyle({
         fillColor: '#94a3b8',
-        weight: 0.6,
+        weight: 0.8,
         color: '#cbd5e1',
         opacity: 0.35,
-        fillOpacity: 0.15
+        fillOpacity: 0.22
       });
     }
   });
@@ -537,18 +570,19 @@ function highlightRegionOnExecMap(targetZone, sourceData = null) {
   }
 }
 
-/**
- * คืนค่าสไตล์เริ่มต้นทั้งหมด
- */
 function resetExecMapHighlight() {
-  if (!execMap || !window.execGeoJsonLayer) return;
+  if (!execMap || !execGeoJsonLayer) return;
   currentSelectedZone = null;
 
-  window.execGeoJsonLayer.eachLayer(layer => {
+  execGeoJsonLayer.eachLayer(layer => {
     layer._isZoneMatch = false;
-    if (layer.defaultStyle) {
-      layer.setStyle(layer.defaultStyle);
-    }
+    layer.setStyle({
+      fillColor: layer._baseColor,
+      weight: 1,
+      color: '#ffffff',
+      opacity: 0.9,
+      fillOpacity: layer._baseOpacity
+    });
   });
 
   execMap.setView([13.75, 100.5], 5);

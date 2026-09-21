@@ -2192,44 +2192,85 @@ function setLoginButtonState(state = 'idle') {
 
   if (state === 'loading') {
     btn.disabled = true;
+    btn.classList.add('opacity-75', 'cursor-not-allowed');
     btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 shrink-0 animate-spin text-orange-500"></i> <span>Authenticating...</span>`;
     if (typeof lucide !== 'undefined') lucide.createIcons({ root: btn });
   } else {
     btn.disabled = false;
+    btn.classList.remove('opacity-75', 'cursor-not-allowed');
     btn.innerHTML = `
-      ${MS_ICON_SVG}
+      ${typeof MS_ICON_SVG !== 'undefined' ? MS_ICON_SVG : ''}
       <span id="btn-login-ms-text">Sign in with Microsoft</span>
     `;
+    if (typeof lucide !== 'undefined') lucide.createIcons({ root: btn });
   }
 }
 
+// ตัวแปรสถานะป้องกัน Race Condition และการผูก Event ซ้ำ
+let isAuthenticating = false;
+let isEventsInitialized = false;
+
 // ==============================================================================
-// 10. EVENT LISTENERS CONTROLLER (CLEAN & REFACTORED)
+// 10. EVENT LISTENERS CONTROLLER (FIXED: NO DOUBLE LOGIN BOUNCE)
 // ==============================================================================
 function setupEventListeners() {
-  // 1. เรนเดอร์ปุ่ม Login เริ่มต้นพร้อมไอคอน Microsoft อัตโนมัติ
+  // 💡 ป้องกันไม่ให้ผูก Event ซ้ำหากฟังก์ชันถูกเรียกมากกว่า 1 ครั้ง
+  if (isEventsInitialized) return;
+  isEventsInitialized = true;
+
+  // 1. เรนเดอร์ปุ่ม Login เริ่มต้น
   setLoginButtonState('idle');
 
-  // 2. จัดการ Event การล็อกอิน
-  document.getElementById('btn-login-ms')?.addEventListener('click', async () => {
-    const loginScreen = document.getElementById('login-screen');
-    const app = document.getElementById('main-app');
+  // 2. จัดการ Event การล็อกอิน (ตัดปัญหาหน้าเว็บ Reload อัตโนมัติ)
+  const loginBtn = document.getElementById('btn-login-ms');
+  if (loginBtn) {
+    loginBtn.addEventListener('click', async (e) => {
+      // 💡 หยุด Default Behavior ของฟอร์ม ป้องกันหน้าเว็บรีเฟรชตัวเองกลับไปหน้าแรก
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
 
-    setLoginButtonState('loading');
+      // ป้องกันการกดเบิ้ลขณะกำลังโหลด
+      if (isAuthenticating) return;
+      isAuthenticating = true;
 
-    if (loginScreen) {
-      loginScreen.classList.add('opacity-0', 'pointer-events-none');
-      setTimeout(() => loginScreen.classList.add('hidden'), 500);
-    }
-    if (app) {
-      app.classList.remove('hidden');
-      setTimeout(() => app.classList.remove('opacity-0', 'pointer-events-none'), 50);
-    }
-    await initAppAfterLogin();
-  });
+      const loginScreen = document.getElementById('login-screen');
+      const app = document.getElementById('main-app');
 
-  // 3. จัดการ Event การออกจากระบบ (คืนค่าปุ่ม Login พร้อมไอคอนกลับมา)
-  document.getElementById('btn-logout')?.addEventListener('click', () => {
+      setLoginButtonState('loading');
+
+      try {
+        // ดำเนินการยืนยันตัวตนและโหลดข้อมูลระบบ
+        if (typeof initAppAfterLogin === 'function') {
+          await initAppAfterLogin();
+        }
+
+        // เมื่อยืนยันตัวตนสำเร็จ ค่อยสลับหน้าจอ UI
+        if (loginScreen) {
+          loginScreen.classList.add('opacity-0', 'pointer-events-none');
+          setTimeout(() => loginScreen.classList.add('hidden'), 500);
+        }
+        if (app) {
+          app.classList.remove('hidden');
+          setTimeout(() => app.classList.remove('opacity-0', 'pointer-events-none'), 50);
+        }
+      } catch (err) {
+        console.error('Login process failed:', err);
+        if (typeof showToast === 'function') {
+          showToast('เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+        }
+        // คืนค่าปุ่มหากเกิดข้อผิดพลาด
+        setLoginButtonState('idle');
+      } finally {
+        isAuthenticating = false;
+      }
+    });
+  }
+
+  // 3. จัดการ Event การออกจากระบบ
+  document.getElementById('btn-logout')?.addEventListener('click', (e) => {
+    if (e) e.preventDefault();
     const app = document.getElementById('main-app');
     const loginScreen = document.getElementById('login-screen');
 
@@ -2237,27 +2278,33 @@ function setupEventListeners() {
     if (loginScreen) loginScreen.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
 
     setLoginButtonState('idle');
-    showToast('You have successfully logged out.');
+    if (typeof showToast === 'function') {
+      showToast('You have successfully logged out.');
+    }
   });
 
   // 4. ตัวกรองค้นหาข้อความ (Debounce 300ms)
   const searchInput = document.querySelector('#filters-content input[type="text"]');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
-      clearTimeout(searchDebounceTimer);
-      searchDebounceTimer = setTimeout(() => applyDynamicFilters(), 300);
+      if (typeof searchDebounceTimer !== 'undefined') clearTimeout(searchDebounceTimer);
+      window.searchDebounceTimer = setTimeout(() => {
+        if (typeof applyDynamicFilters === 'function') applyDynamicFilters();
+      }, 300);
     });
   }
 
-  // 5. ตัวกรองตัวเลข (Debounce 250ms แยกอิสระ)
+  // 5. ตัวกรองตัวเลข (Debounce 250ms)
   const numericFilterIds = ['filter-backhaul-min', 'filter-backhaul-max', 'filter-min-avail-trips'];
   numericFilterIds.forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.removeAttribute('oninput');
       el.addEventListener('input', () => {
-        clearTimeout(numericDebounceTimer);
-        numericDebounceTimer = setTimeout(() => applyDynamicFilters(), 250);
+        if (typeof numericDebounceTimer !== 'undefined') clearTimeout(numericDebounceTimer);
+        window.numericDebounceTimer = setTimeout(() => {
+          if (typeof applyDynamicFilters === 'function') applyDynamicFilters();
+        }, 250);
       });
     }
   });
@@ -2266,18 +2313,21 @@ function setupEventListeners() {
   document.querySelectorAll('#display-mode-segmented .mode-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const selectedBtn = e.currentTarget;
-      state.activeFilters.displayMode = selectedBtn.getAttribute('data-mode');
+      if (typeof state !== 'undefined' && state.activeFilters) {
+        state.activeFilters.displayMode = selectedBtn.getAttribute('data-mode');
+      }
 
       document.querySelectorAll('#display-mode-segmented .mode-btn').forEach(b => {
         b.className = 'mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-zinc-700/50';
       });
       selectedBtn.className = 'mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-[#f97316] text-white shadow-sm';
-      applyDynamicFilters();
+      if (typeof applyDynamicFilters === 'function') applyDynamicFilters();
     });
   });
 
   // 7. พับ/กางแถบ Sidebar
   document.getElementById('toggle-sidebar')?.addEventListener('click', () => {
+    if (typeof state === 'undefined') return;
     state.isSidebarOpen = !state.isSidebarOpen;
     const sb = document.getElementById('sidebar');
     if (sb) sb.className = `${state.isSidebarOpen ? 'w-64' : 'w-20'} relative z-50 border-r flex flex-col shrink-0 transition-[width] duration-300 ease-in-out bg-white dark:bg-zinc-900 border-slate-200 dark:border-slate-800`;
@@ -2297,7 +2347,7 @@ function setupEventListeners() {
       lucide.createIcons({ root: toggleBtn });
     }
 
-    renderSidebarMenu();
+    if (typeof renderSidebarMenu === 'function') renderSidebarMenu();
     setTimeout(() => {
       if (typeof execMap !== 'undefined' && execMap) execMap.invalidateSize();
       if (typeof dashMap !== 'undefined' && dashMap) dashMap.invalidateSize();
@@ -2307,6 +2357,7 @@ function setupEventListeners() {
 
   // 8. พับ/กางตารางข้อมูลด้านล่าง
   document.getElementById('toggle-table')?.addEventListener('click', () => {
+    if (typeof state === 'undefined') return;
     state.isTableExpanded = !state.isTableExpanded;
     const tc = document.getElementById('table-container');
     if (tc) {
@@ -2349,17 +2400,20 @@ function setupEventListeners() {
     });
   });
 
-  // 11. ปิด Custom Dropdown เมื่อคลิกพื้นที่อื่นภายนอก
+  // 11. ปิด Custom Dropdown เมื่อคลิกภายนอก
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.custom-select-container')) {
       document.querySelectorAll('.custom-select-dropdown').forEach(el => el.classList.add('hidden'));
     }
   });
 
-  // 12. ปุ่มสลับ Dark / Light Theme
-  document.getElementById('btn-theme-toggle')?.addEventListener('click', toggleDarkMode);
+  // 12. ปุ่มสลับ Theme
+  document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
+    if (typeof toggleDarkMode === 'function') toggleDarkMode();
+  });
 }
 
+// เรียกใช้งานเพียงรอบเดียวเมื่อ DOM พร้อม
 window.addEventListener('DOMContentLoaded', () => {
   if (typeof lucide !== 'undefined') lucide.createIcons();
   setupEventListeners();
