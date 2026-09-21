@@ -1578,8 +1578,9 @@ window.toggleRouteDetail = function(routeId) {
 };
 
 // ==============================================================================
-// 7. ZONE DRILLDOWN & DETAIL TABLE CONTROLLER (PROVINCE FILTER SYNCED & SORTED)
+// 7. ZONE DRILLDOWN & DETAIL TABLE CONTROLLER (PROVINCE FILTER SYNCED & MAP FOCUSED)
 // ==============================================================================
+
 function getExecFilteredRoutes() {
   let allRoutes = window.globalRouteSheetData || [];
   if (!allRoutes || allRoutes.length === 0) return [];
@@ -1601,7 +1602,17 @@ function getExecFilteredRoutes() {
   });
 }
 
+// 💡 ปรับปรุง: เมื่อคลิกการ์ดภาค ให้เรียกไฮไลต์แผนที่ และเปิด-ปิด (Toggle) ได้อย่างถูกต้อง
 window.selectExecZoneCard = function(zoneName, cardEl) {
+  const isAlreadyActive = cardEl && cardEl.classList.contains('ring-orange-500');
+
+  // ถ้าคลิกภาคเดิมซ้ำ ให้ทำการยกเลิกการเลือก และปิดตาราง
+  if (isAlreadyActive) {
+    closeExecZoneDetailTable();
+    return;
+  }
+
+  // อัปเดตสไตล์ของการ์ดด้านซ้าย
   document.querySelectorAll('#exec-region-summary-list > div').forEach(card => {
     card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
     card.classList.add('border-slate-200/90', 'dark:border-slate-800');
@@ -1612,6 +1623,12 @@ window.selectExecZoneCard = function(zoneName, cardEl) {
     cardEl.classList.add('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
   }
 
+  // 💡 จุดที่ 1: สั่งให้แผนที่ Executive Map ไฮไลต์ภาค และเปลี่ยนภาคอื่นเป็นสีเทาทันที
+  if (typeof highlightRegionOnExecMap === 'function') {
+    highlightRegionOnExecMap(zoneName);
+  }
+
+  // อัปเดตข้อมูลตารางด้านล่าง (โดยไม่เลื่อนหน้าจอหนี)
   showExecZoneDetailsTable(zoneName);
 };
 
@@ -1633,7 +1650,7 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
     return rowZone === cleanTargetZone || rowZone.includes(cleanTargetZone);
   });
 
-  // 💡 Sort อย่างแม่นยำ ป้องกัน NaN และเรียงจาก % ว่างมากไปน้อย (100% -> 0%)
+  // Sort ตาม % ว่างมากไปน้อย
   matchedRoutes.sort((a, b) => {
     const getAvail = (row) => {
       if (row._parsed && typeof row._parsed.availPct === 'number' && !isNaN(row._parsed.availPct)) {
@@ -1697,18 +1714,23 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
     }).join('');
   }
 
+  // แสดง Panel ตารางขึ้นมา
   panel.classList.remove('hidden');
   panel.style.display = 'block';
 
+  // 💡 จุดที่ 2: ปิดคำสั่ง scrollIntoView เพื่อให้สายตาผู้ใช้โฟกัสอยู่ที่แผนที่ด้านบน ไม่โดนดึงลงมา
+  /*
   setTimeout(() => {
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 50);
+  */
 
   if (typeof lucide !== 'undefined') lucide.createIcons({ root: panel });
 }
 
 window.showExecZoneDetailsTable = showExecZoneDetailsTable;
 
+// 💡 จุดที่ 3: เมื่อปิดตาราง ให้คืนค่าสไตล์แผนที่ทั้งหมดกลับสู่สภาพเดิม
 window.closeExecZoneDetailTable = function() {
   const panel = document.getElementById('exec-zone-detail-panel');
   if (panel) {
@@ -1720,9 +1742,18 @@ window.closeExecZoneDetailTable = function() {
     card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
     card.classList.add('border-slate-200/90', 'dark:border-slate-800');
   });
+
+  // รีเซ็ตแผนที่กลับเป็นภาพรวมทั้งประเทศ
+  if (typeof resetExecMapHighlight === 'function') {
+    resetExecMapHighlight();
+  }
 };
 
 window.drillDownExecZone = function(zoneName) {
+  // หากมีการเรียกผ่าน drillDown ให้สั่งไฮไลต์แผนที่ด้วยเช่นกัน
+  if (typeof highlightRegionOnExecMap === 'function') {
+    highlightRegionOnExecMap(zoneName);
+  }
   showExecZoneDetailsTable(zoneName);
 };
 

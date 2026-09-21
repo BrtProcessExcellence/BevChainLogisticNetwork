@@ -255,7 +255,7 @@ function resolveLocationCoords(locationKey) {
 }
 
 // ==============================================================================
-// 4. EXECUTIVE DASHBOARD CHOROPLETH & ZONE CONTROLLER (CLEAN CODE)
+// 4. EXECUTIVE DASHBOARD CHOROPLETH & ZONE CONTROLLER (MAP FOCUS & GRAY UNSELECTED)
 // ==============================================================================
 
 let currentSelectedZone = null;
@@ -268,7 +268,6 @@ async function loadThailandGeoJSON() {
   if (geoJsonLoadingPromise) return geoJsonLoadingPromise;
 
   geoJsonLoadingPromise = (async () => {
-    // 1. พยายามโหลดจาก Local Data ก่อน
     try {
       const res = await fetch('./data/thailand.json');
       if (res.ok) return (cachedThailandGeoJSON = await res.json());
@@ -276,7 +275,6 @@ async function loadThailandGeoJSON() {
       console.warn('Local GeoJSON unavailable, falling back to CDN...');
     }
 
-    // 2. Fallback CDN
     const cdnUrls = [
       'https://cdn.jsdelivr.net/gh/apisit/thailand.json@master/thailand.json',
       'https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json'
@@ -313,7 +311,7 @@ function getExecChoroplethColor(availPct) {
 }
 
 /**
- * จัดการชื่อจังหวัดให้เป็นมาตรฐาน (Standardize & Clean)
+ * จัดการชื่อจังหวัดให้เป็นมาตรฐาน
  */
 function normalizeProvName(name) {
   if (!name || name === '-' || name === 'undefined') return '';
@@ -349,7 +347,6 @@ async function renderExecRouteHeatmap(data) {
   currentSelectedZone = null;
   if (!data || data.length === 0) return;
 
-  // 1. รวมกลุ่มข้อมูลสถิติรายจังหวัด (Aggregation)
   const provMap = {};
 
   data.forEach(row => {
@@ -387,7 +384,6 @@ async function renderExecRouteHeatmap(data) {
     }
   });
 
-  // คำนวณสรุป % สัดส่วนเฉลี่ย
   Object.values(provMap).forEach(item => {
     item.zoneAvailPct = item.totalRoutes > 0 ? (item.availRoutes / item.totalRoutes) * 100 : 0;
     item.hasData = item.totalRoutes > 0;
@@ -421,7 +417,7 @@ async function renderExecRouteHeatmap(data) {
         const rawGeoName = feature.properties?.name || feature.properties?.name_th || '';
         const displayTitle = stat?.displayName || (typeof getThaiProvinceName === 'function' ? getThaiProvinceName(rawGeoName) : rawGeoName);
 
-        // 💡 บันทึก Style เริ่มต้นเก็บไว้ใช้ตอน Reset/Highlight
+        // บันทึก Style เริ่มต้นเก็บไว้
         layer.defaultStyle = {
           fillColor: layer.options.fillColor,
           weight: 1,
@@ -430,7 +426,6 @@ async function renderExecRouteHeatmap(data) {
           fillOpacity: layer.options.fillOpacity
         };
 
-        // Tooltip แสดงรายละเอียด
         layer.bindTooltip(`
           <div class="px-2.5 py-1.5 min-w-[200px] font-sans">
             <strong class="text-slate-800 dark:text-white block font-bold text-xs border-b pb-1 mb-1.5 border-slate-200 dark:border-slate-700">${displayTitle}</strong>
@@ -453,7 +448,6 @@ async function renderExecRouteHeatmap(data) {
           </div>
         `, { sticky: true, className: 'custom-leaflet-tooltip' });
 
-        // Event Hover (Mouseover / Mouseout)
         layer.on({
           mouseover: (e) => {
             const l = e.target;
@@ -463,19 +457,21 @@ async function renderExecRouteHeatmap(data) {
           mouseout: (e) => {
             if (!execGeoJsonLayer) return;
             const l = e.target;
-            // ถ้ามีการเลือกภาคอยู่ ให้คงสไตล์ตามภาคนั้น ไม่ถูกล้างทิ้ง
+            // ถ้าระบบกำลังเลือกภาค ให้รักษาสถานะ (เลือก = สีเด่น / ไม่ได้เลือก = สีเทา)
             if (currentSelectedZone) {
               const isMatch = l._isZoneMatch;
               l.setStyle(isMatch ? {
-                weight: 3.0,
+                fillColor: l.defaultStyle.fillColor,
+                weight: 2.5,
                 color: '#f97316',
                 opacity: 1.0,
-                fillOpacity: 0.9
+                fillOpacity: 0.85
               } : {
-                weight: 0.6,
-                color: '#ffffff',
-                opacity: 0.3,
-                fillOpacity: 0.12
+                fillColor: '#94a3b8',   // 💡 คืนเป็นสีเทา
+                weight: 0.8,
+                color: '#cbd5e1',
+                opacity: 0.4,
+                fillOpacity: 0.25
               });
             } else {
               l.setStyle(l.defaultStyle || { weight: 1, color: '#ffffff', opacity: 0.9, fillOpacity: 0.75 });
@@ -485,7 +481,6 @@ async function renderExecRouteHeatmap(data) {
       }
     }).addTo(execMap);
 
-    // คลิกพื้นหลังแผนที่เพื่อยกเลิก Highlight
     execMap.off('click', resetExecMapHighlight);
     execMap.on('click', resetExecMapHighlight);
 
@@ -495,27 +490,27 @@ async function renderExecRouteHeatmap(data) {
 }
 
 // ==============================================================================
-// REGION / ZONE HIGHLIGHT CONTROLLER
+// REGION / ZONE HIGHLIGHT CONTROLLER (FOCUS MAP & GRAY UNSELECTED)
 // ==============================================================================
 
 /**
- * ไฮไลต์กลุ่มจังหวัดในภาคที่เลือก พร้อมซูมแผนที่ไปยังภาคนั้น
- * @param {string} targetZone - ชื่อภาคที่เลือก
- * @param {Array} sourceData - ชุดข้อมูล routes
+ * สั่งไฮไลต์เฉพาะภาคที่เลือก และเปลี่ยนจังหวัดอื่นเป็นสีเทาทั้งหมด
+ * @param {string} targetZone - ชื่อภาค
+ * @param {Array} sourceData - ข้อมูล routes
  */
 function highlightRegionOnExecMap(targetZone, sourceData = null) {
   if (!execMap || !execGeoJsonLayer) return;
 
   const cleanTargetZone = cleanAllSpaces(targetZone);
 
-  // คลิกซ้ำที่ภาคเดิม = ยกเลิกการเลือก
+  // คลิกซ้ำที่เดิม = ยกเลิกการเลือก
   if (currentSelectedZone === cleanTargetZone) {
     resetExecMapHighlight();
     return;
   }
   currentSelectedZone = cleanTargetZone;
 
-  // 1. รวบรวมรายชื่อจังหวัดในภาคนั้น
+  // 1. ดึงรายชื่อจังหวัดในภาคนั้น
   const data = sourceData || window.globalRouteSheetData || currentFilteredData || [];
   const provincesInZone = new Set();
 
@@ -530,7 +525,7 @@ function highlightRegionOnExecMap(targetZone, sourceData = null) {
   const provList = Array.from(provincesInZone);
   const matchedBounds = [];
 
-  // 2. ปรับสไตล์ Layer: เด่นชัดในภาคที่เลือก และจางลงในภาคอื่น
+  // 2. ปรับแต่งสไตล์: ภาคที่เลือก = คงสี Heatmap เดิม + ขอบส้ม / ภาคอื่น = สีเทาล้วน
   execGeoJsonLayer.eachLayer(layer => {
     const rawGeoName = layer.feature?.properties?.name || layer.feature?.properties?.name_th || '';
     const cleanGeo = cleanAllSpaces(rawGeoName);
@@ -541,36 +536,46 @@ function highlightRegionOnExecMap(targetZone, sourceData = null) {
                     provincesInZone.has(cleanThai) ||
                     provList.some(p => cleanThai.includes(p) || p.includes(cleanThai));
 
-    layer._isZoneMatch = isMatch; // บันทึก Flag ไว้ใช้ตอน mouseout
+    layer._isZoneMatch = isMatch;
 
     if (isMatch) {
+      // 💡 จังหวัดในภาคที่เลือก: แสดงสีเดิม พร้อมเส้นขอบไฮไลต์สีส้ม
       layer.setStyle({
-        weight: 3.0,
+        fillColor: layer.defaultStyle?.fillColor || '#f97316',
+        weight: 2.5,
         color: '#f97316',
         opacity: 1.0,
-        fillOpacity: 0.9
+        fillOpacity: 0.85
       });
       layer.bringToFront();
       matchedBounds.push(layer.getBounds());
     } else {
+      // 💡 จังหวัดที่ไม่ได้เลือก: บังคับเป็นสีเทา (Gray out)
       layer.setStyle({
-        weight: 0.6,
-        color: '#ffffff',
-        opacity: 0.3,
-        fillOpacity: 0.12
+        fillColor: '#94a3b8',   // สีเทาชัดเจน
+        weight: 0.8,
+        color: '#cbd5e1',       // ขอบสีเทาอ่อน
+        opacity: 0.4,
+        fillOpacity: 0.25       // เทาจาง ไม่แย่งสายตา
       });
     }
   });
 
-  // 3. ซูมแผนที่เข้าสู่ขอบเขตของภาคนั้น
+  // 3. ซูมแผนที่ไปที่กลุ่มจังหวัดในภาคนั้น
   if (matchedBounds.length > 0) {
     const groupBounds = matchedBounds.reduce((acc, b) => acc.extend(b), L.latLngBounds(matchedBounds[0]));
-    execMap.fitBounds(groupBounds, { padding: [40, 40], maxZoom: 8 });
+    execMap.fitBounds(groupBounds, { padding: [30, 30], maxZoom: 8 });
+  }
+
+  // 💡 4. เลื่อนสายตาหน้าจอ (Viewport) กลับมาโฟกัสที่ตัวแผนที่ ป้องกันไม่ให้หน้าจอเด้งตกไปที่ตารางด้านล่าง
+  const mapContainer = document.getElementById('map-exec-heatmap') || execMap.getContainer();
+  if (mapContainer) {
+    mapContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 }
 
 /**
- * ล้างค่า Highlight คืนสไตล์ตั้งต้นของทุกจังหวัด และซูมกลับมุมมองภาพรวมประเทศ
+ * ล้างค่า Highlight คืนสไตล์เดิมทั้งหมด
  */
 function resetExecMapHighlight() {
   if (!execMap || !execGeoJsonLayer) return;
