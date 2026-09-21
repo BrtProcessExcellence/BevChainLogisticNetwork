@@ -241,3 +241,181 @@ const GEMINI_CONFIG = {
   API_KEY: "", // ใส่ Gemini API Key ของคุณที่นี่
   MODEL: "gemini-3-flash-preview"
 };
+// ==============================================================================
+// SMART LOGISTICS i18n ENGINE (ACCURATE DOMAIN-SPECIFIC TRANSLATION)
+// ==============================================================================
+
+// 1. คลังคำศัพท์เฉพาะทางด้านโลจิสติกส์และภูมิศาสตร์ (กำหนดความหมายที่ถูกต้อง)
+const LOGISTICS_DICT = {
+  // --- ภูมิภาค / โซน (ZONES & REGIONS) ---
+  'เหนือบน': 'Upper North',
+  'เหนือล่าง': 'Lower North',
+  'ภาคเหนือตอนบน': 'Upper Northern',
+  'ภาคเหนือตอนล่าง': 'Lower Northern',
+  'ภาคเหนือ': 'Northern',
+  'อีสานบน': 'Upper Northeast',
+  'อีสานล่าง': 'Lower Northeast',
+  'ภาคอีสาน': 'Northeastern',
+  'ตะวันออกเฉียงเหนือ': 'Northeast',
+  'กลาง': 'Central',
+  'กลางล่าง': 'Lower Central',
+  'ภาคกลาง': 'Central Region',
+  'ใต้บน': 'Upper South',
+  'ใต้ล่าง': 'Lower South',
+  'ภาคใต้ตอนบน': 'Upper Southern',
+  'ภาคใต้ตอนล่าง': 'Lower Southern',
+  'ภาคใต้': 'Southern',
+  'ตะวันออก': 'Eastern',
+  'ตะวันตก': 'Western',
+  'กรุงเทพฯ และปริมณฑล': 'Bangkok & Vicinity',
+  'ชานเมือง': 'Suburbs',
+  'กรุงเทพฯ': 'Bangkok',
+  'กทม.': 'BKK',
+
+  // --- แผนที่ & ตัวกรอง (MAP & FILTERS) ---
+  'เส้นทางทั้งหมด': 'All Routes',
+  'ความหนาแน่นของเส้นทาง': 'Trip Density',
+  'โควตาว่าง': 'Available Backhaul',
+  'งานเต็ม': 'Full / 0% Available',
+  'ต้นทาง': 'Origin',
+  'ปลายทาง': 'Destination',
+  'จังหวัด': 'Province',
+  'โซน': 'Zone',
+  'ภาค': 'Region',
+  'ค้นหา': 'Search',
+  'ทั้งหมด': 'All',
+
+  // --- ประเภทรถ (TRUCK TYPES) ---
+  'ประเภทรถ': 'Truck Type',
+  '4 ล้อ': '4-Wheeler',
+  'รถ 4 ล้อ': '4-Wheel Truck',
+  '6 ล้อ': '6-Wheeler',
+  'รถ 6 ล้อ': '6-Wheel Truck',
+  '10 ล้อ': '10-Wheeler',
+  'รถ 10 ล้อ': '10-Wheel Truck',
+  'เทรลเลอร์': 'Trailer',
+  'รถเทรลเลอร์': 'Trailer',
+  'หัวลาก': 'Prime Mover',
+
+  // --- ข้อมูลตาราง & งานขนส่ง (OPERATIONS & KPI) ---
+  'ผู้รับเหมา': 'Carriers',
+  'ประเภทรถ': 'Truck Type',
+  'ประเภทสินค้า': 'Product Category',
+  'ลูกค้า': 'Customer',
+  'ประเภทลูกค้า': 'Customer Type',
+  'เที่ยว/สัปดาห์': 'Trips/Wk',
+  'เที่ยวว่าง': 'Available Trips',
+  'ภาระงานรวม': 'Total Workload',
+  'สัดส่วนรถว่าง': 'Available Proportion',
+  'งานบุญรอด': 'Boonrawd Task',
+  'งานของผู้รับเหมาเอง': 'Own Task',
+  'งานนอกของ BRF': 'BRF External',
+  'ระบุต้นทาง และ ปลายทาง งานนอกของ BRF': 'External Route Details',
+  'ไม่มีเส้นทางวิ่ง': 'No Routes Available',
+  'ไม่พบข้อมูล': 'No Data Found',
+  'ไม่ระบุ': 'Unspecified'
+};
+
+// สร้างพจนานุกรมแปลกลับ (EN -> TH) อัตโนมัติ
+const REVERSE_DICT = Object.entries(LOGISTICS_DICT).reduce((acc, [th, en]) => {
+  acc[en] = th;
+  return acc;
+}, {});
+
+// สถานะภาษาปัจจุบัน (ดึงจาก localStorage ถ้ามี)
+let currentAppLang = localStorage.getItem('app_lang') || 'th';
+
+/**
+ * ฟังก์ชันแปลคำศัพท์เดี่ยวสำหรับใช้ใน JavaScript Template Literal
+ * เช่น t('เหนือบน') -> 'Upper North'
+ */
+function t(term) {
+  if (!term) return '';
+  const clean = String(term).trim();
+  if (currentAppLang === 'en') {
+    return LOGISTICS_DICT[clean] || clean;
+  }
+  return REVERSE_DICT[clean] || clean;
+}
+
+/**
+ * สแกนและแปลข้อความบนหน้าเว็บอัตโนมัติ (DOM Tree Walker)
+ * ปลอดภัย ไม่ทำลายแท็ก HTML, Event Listener หรือโครงสร้างเดิม
+ */
+function applySmartTranslation(targetLang) {
+  currentAppLang = targetLang;
+  localStorage.setItem('app_lang', targetLang);
+
+  const isEn = targetLang === 'en';
+  const dict = isEn ? LOGISTICS_DICT : REVERSE_DICT;
+  const dictKeys = Object.keys(dict).sort((a, b) => b.length - a.length); // คำยาวแปลก่อน ป้องกันคำสั้นทับ
+
+  // ฟังก์ชันแทนที่คำในข้อความ
+  const replaceText = (text) => {
+    let result = text;
+    dictKeys.forEach(key => {
+      if (result.includes(key)) {
+        // ใช้ RegExp แบบ Safe Replace
+        result = result.split(key).join(dict[key]);
+      }
+    });
+    return result;
+  };
+
+  // เดินตรวจ Text Node ทั้งหน้าเว็บ ยกเว้น tag script, style
+  const walker = document.createTreeWalker(
+    document.body,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: (node) => {
+        const parentTag = node.parentElement ? node.parentElement.tagName.toLowerCase() : '';
+        if (['script', 'style', 'noscript', 'code'].includes(parentTag)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    }
+  );
+
+  let currentNode;
+  while ((currentNode = walker.nextNode())) {
+    const originalText = currentNode.nodeValue;
+    const translated = replaceText(originalText);
+    if (originalText !== translated) {
+      currentNode.nodeValue = translated;
+    }
+  }
+
+  // อัปเดตข้อความบนปุ่ม
+  const langBtn = document.getElementById('toggle-lang');
+  if (langBtn) {
+    langBtn.innerText = isEn ? 'TH' : 'EN';
+  }
+}
+
+// ==============================================================================
+// ผูก EVENT เข้ากับปุ่ม #toggle-lang
+// ==============================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  const langBtn = document.getElementById('toggle-lang');
+  if (!langBtn) return;
+
+  // ตั้งค่าเริ่มต้นปุ่ม
+  langBtn.innerText = currentAppLang === 'en' ? 'TH' : 'EN';
+
+  // ถ้าเคยเลือกภาษาอังกฤษไว้ ให้แปลทันทีตอนโหลดหน้า
+  if (currentAppLang === 'en') {
+    setTimeout(() => applySmartTranslation('en'), 200);
+  }
+
+  langBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const nextLang = currentAppLang === 'th' ? 'en' : 'th';
+    applySmartTranslation(nextLang);
+
+    // หากมีตารางที่เพิ่ง render ให้สั่ง renderTable ใหม่อีกครั้งให้สอดคล้องกัน (ถ้ามีฟังก์ชัน)
+    if (typeof renderTable === 'function' && typeof currentFilteredData !== 'undefined') {
+      renderTable(currentFilteredData);
+    }
+  });
+});
