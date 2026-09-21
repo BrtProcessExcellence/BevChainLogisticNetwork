@@ -68,9 +68,8 @@ function parseCoordinate(latVal, lngVal) {
   if (isNaN(lat) || isNaN(lng)) return null;
   return { lat, lng };
 }
-
 /**
- * 1. ดึงข้อมูลเส้นทางหลักแบบลดภาระ Network และตัด Overhead count: exact
+ * 1. ดึงข้อมูลเส้นทางหลักแบบ Dynamic Batch (ดึงครบทุกแถวแน่นอน ไม่โดนตัดที่ 15,000)
  */
 async function fetchNewRouteSheet(limit = null) {
   if (inFlightRouteFetchPromise) {
@@ -95,31 +94,36 @@ async function fetchNewRouteSheet(limit = null) {
         return window.globalRouteSheetData;
       }
 
-      // 💡 ดึงแบบประมาณการ Batch Size ใหญ่ขึ้น (ลดภาระ HTTP Overhead)
-      const { count, error: countErr } = await db
-        .from(API_CONFIG.TABLES.ROUTES_VIEW)
-        .select('*', { count: 'planned', head: true }); // ใช้ 'planned' เร็วกว่า 'exact' หลายเท่า
+      // 💡 ดึงแบบ Dynamic Batch วนลูปจนกว่าจะได้ข้อมูลครบทุกแถว
+      const step = API_CONFIG.BATCH_SIZE || 5000;
+      let combinedData = [];
+      let from = 0;
+      let hasMore = true;
 
-      const effectiveCount = count && count > 0 ? count : 15000;
-      const step = API_CONFIG.BATCH_SIZE;
-      const totalBatches = Math.ceil(effectiveCount / step);
-      const batchPromises = [];
-
-      for (let i = 0; i < totalBatches; i++) {
-        const from = i * step;
+      while (hasMore) {
         const to = from + step - 1;
 
-        batchPromises.push(
-          db
-            .from(API_CONFIG.TABLES.ROUTES_VIEW)
-            .select(API_CONFIG.ROUTE_COLUMNS)
-            .order('id', { ascending: true })
-            .range(from, to)
-        );
-      }
+        const { data, error } = await db
+          .from(API_CONFIG.TABLES.ROUTES_VIEW)
+          .select(API_CONFIG.ROUTE_COLUMNS)
+          .order('id', { ascending: true })
+          .range(from, to);
 
-      const batchResults = await Promise.all(batchPromises);
-      const combinedData = batchResults.flatMap(res => res.data || []);
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          combinedData = combinedData.concat(data);
+          
+          // ถ้าข้อมูลที่คืนกลับมาน้อยกว่าขนาด Batch แสดงว่าถึงแถวสุดท้ายแล้ว
+          if (data.length < step) {
+            hasMore = false;
+          } else {
+            from += step;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
 
       window.globalRouteSheetData = combinedData;
       return combinedData;

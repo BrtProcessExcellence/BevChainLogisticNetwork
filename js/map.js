@@ -261,18 +261,50 @@ function resolveLocationCoords(locationKey) {
 let currentSelectedZone = null;
 let execRenderToken = 0; // ป้องกัน Race Condition และ Layer ซ้อนทับ
 
+/**
+ * โหลดไฟล์ GeoJSON ขอบเขตประเทศไทย พร้อมระบบ Persistent Cache (sessionStorage)
+ */
 async function loadThailandGeoJSON() {
+  const CACHE_KEY = 'cache_thailand_geojson';
+
+  // 1. ตรวจสอบใน Memory Cache ก่อน
   if (cachedThailandGeoJSON) return cachedThailandGeoJSON;
   if (geoJsonLoadingPromise) return geoJsonLoadingPromise;
 
+  // 2. ตรวจสอบใน Persistent Storage (sessionStorage)
+  const storedGeoJson = sessionStorage.getItem(CACHE_KEY);
+  if (storedGeoJson) {
+    try {
+      cachedThailandGeoJSON = JSON.parse(storedGeoJson);
+      return cachedThailandGeoJSON;
+    } catch (e) {
+      console.warn('GeoJSON cache parse error, fetching fresh data...');
+      sessionStorage.removeItem(CACHE_KEY);
+    }
+  }
+
+  // 3. หากไม่มีในแคช ให้ดาวน์โหลดจากไฟล์ data/thailand.json
   geoJsonLoadingPromise = (async () => {
     try {
       const res = await fetch('./data/thailand.json');
-      if (res.ok) return (cachedThailandGeoJSON = await res.json());
-    } catch (e) {
+      if (res.ok) {
+        const data = await res.json();
+        cachedThailandGeoJSON = data;
+
+        // บันทึกลง sessionStorage สำหรับการเปิดครั้งถัดไป
+        try {
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+        } catch (storageErr) {
+          console.warn('Storage quota exceeded, caching in memory only.');
+        }
+
+        return cachedThailandGeoJSON;
+      }
+    } catch (err) {
       console.warn('Local GeoJSON fallback to CDN...');
     }
 
+    // Fallback CDN หากไฟล์ในเครื่องโหลดไม่ได้
     const cdnUrls = [
       'https://cdn.jsdelivr.net/gh/apisit/thailand.json@master/thailand.json',
       'https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json'
@@ -280,13 +312,21 @@ async function loadThailandGeoJSON() {
 
     for (const url of cdnUrls) {
       try {
-        const res = await fetch(url);
-        if (res.ok) return (cachedThailandGeoJSON = await res.json());
+        const cdnRes = await fetch(url);
+        if (cdnRes.ok) {
+          const data = await cdnRes.json();
+          cachedThailandGeoJSON = data;
+          try {
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+          } catch (_) {}
+          return cachedThailandGeoJSON;
+        }
       } catch (err) {
         console.warn(`CDN failed: ${url}`);
       }
     }
-    throw new Error('Unable to load Thailand GeoJSON.');
+
+    throw new Error('Unable to load Thailand GeoJSON from any source.');
   })();
 
   try {
@@ -1279,4 +1319,52 @@ function renderHeatmap(filteredData, metric, themeKey, radius) {
       pane: 'heatPane'
     }).addTo(dashMap);
   }
+}
+/**
+ * ดึงข้อมูลเส้นทางขนส่ง พร้อมระบบ Persistent Cache ป้องกันการ Query ซ้ำ
+ * @param {boolean} forceRefresh - กำหนด true เมื่อต้องการบังคับดึงข้อมูลใหม่
+ */
+async function fetchRouteMasterData(forceRefresh = false) {
+  const CACHE_KEY = 'cache_supabase_routes_data';
+  const CACHE_TIME_KEY = 'cache_supabase_routes_time';
+  const CACHE_TTL_MS = 15 * 60 * 1000; // อายุแคช 15 นาที
+
+  const now = Date.now();
+  const cachedTime = Number(sessionStorage.getItem(CACHE_TIME_KEY) || 0);
+  const isCacheValid = (now - cachedTime) < CACHE_TTL_MS;
+
+  // 1. ถ้ามีแคชและยังไม่หมดอายุ ให้ใช้ข้อมูลจากเครื่องทันที
+  if (!forceRefresh && isCacheValid) {
+    const rawData = sessionStorage.getItem(CACHE_KEY);
+    if (rawData) {
+      try {
+        const parsed = JSON.parse(rawData);
+        window.globalRouteSheetData = parsed;
+        return parsed;
+      } catch (e) {
+        sessionStorage.removeItem(CACHE_KEY);
+      }
+    }
+  }
+
+  // 2. ดึงข้อมูลใหม่จาก Supabase View
+  const { data, error } = await supabaseClient
+    .from('view_routes_with_coords')
+    .select('*');
+
+  if (error) {
+    console.error('Error fetching routes from Supabase:', error);
+    throw error;
+  }
+
+  // 3. บันทึกผลลัพธ์ลง sessionStorage
+  window.globalRouteSheetData = data || [];
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    sessionStorage.setItem(CACHE_TIME_KEY, String(now));
+  } catch (quotaErr) {
+    console.warn('sessionStorage full: data retained in window memory only.');
+  }
+
+  return window.globalRouteSheetData;
 }

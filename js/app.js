@@ -221,15 +221,43 @@ function precomputeRouteData(routes) {
 // 3. APPLICATION LIFECYCLE & DATA BOOTSTRAP
 // ==============================================================================
 async function initAppAfterLogin() {
+  const app = document.getElementById('main-app');
+
+  // ============================================================================
+  // 💡 จุดแก้ที่ 1: ตรวจสอบและปลด display: none ให้ DOM มีขนาดจริงก่อนเริ่มระบบ Map
+  // ============================================================================
+  if (app) {
+    app.classList.remove('hidden');
+    app.classList.remove('opacity-0', 'pointer-events-none');
+  }
+
+  // เรนเดอร์ UI พื้นฐาน
   try {
     if (typeof renderSidebarMenu === 'function') renderSidebarMenu();
-    if (typeof initMaps === 'function') initMaps();
     if (typeof initCharts === 'function') initCharts();
     if (typeof renderChat === 'function') renderChat();
+
+    // 💡 สร้างแผนที่เฉพาะรอบแรกที่ยังไม่มีตัวแปร Map (ป้องกัน Leaflet Error: Map container is already initialized)
+    const isMapInitialized = (typeof execMap !== 'undefined' && execMap) || 
+                             (typeof dashMap !== 'undefined' && dashMap);
+
+    if (!isMapInitialized && typeof initMaps === 'function') {
+      initMaps();
+    }
   } catch (e) {
     console.error('UI Render Error:', e);
   }
 
+  // ============================================================================
+  // 💡 จุดแก้ที่ 2: สั่งให้แผนที่คำนวณขนาดจริงทันทีหลังปลด hidden
+  // ============================================================================
+  requestAnimationFrame(() => {
+    if (typeof dashMap !== 'undefined' && dashMap) dashMap.invalidateSize();
+    if (typeof simMap !== 'undefined' && simMap) simMap.invalidateSize();
+    if (typeof execMap !== 'undefined' && execMap) execMap.invalidateSize();
+  });
+
+  // โหลดข้อมูล Master Data ทั้งหมดพร้อมกัน
   try {
     const [provData, originData, routeData, shipToData] = await Promise.all([
       typeof fetchProvinceLocations === 'function' ? fetchProvinceLocations().catch(() => ({})) : Promise.resolve({}),
@@ -259,16 +287,20 @@ async function initAppAfterLogin() {
       });
     }
 
+    // ============================================================================
+    // 💡 จุดแก้ที่ 3: อัปเดตมุมมองและคำนวณขนาดแผนที่ให้สมบูรณ์
+    // ============================================================================
     if (typeof updateView === 'function') updateView();
     if (typeof populateDashboardFilters === 'function') populateDashboardFilters(window.globalRouteSheetData);
     if (typeof applyDynamicFilters === 'function') await applyDynamicFilters();
     if (typeof updateExecutiveDashboard === 'function') await updateExecutiveDashboard(window.globalRouteSheetData);
 
+    // หน่วงเวลาเล็กน้อยหลังจาก Transition ของ CSS แสดงผลเสร็จ 100%
     setTimeout(() => {
       if (typeof dashMap !== 'undefined' && dashMap) dashMap.invalidateSize();
       if (typeof simMap !== 'undefined' && simMap) simMap.invalidateSize();
       if (typeof execMap !== 'undefined' && execMap) execMap.invalidateSize();
-    }, 300);
+    }, 200);
 
   } catch (err) {
     console.error('Data Fetch Error:', err);
@@ -1289,12 +1321,14 @@ routeKeys.sort((a, b) => {
           <div class="font-bold text-slate-800 dark:text-white">${escapeHtml(grp.origin)} &rarr; ${escapeHtml(grp.shipToDesc)}</div>
           <div class="text-[10px] text-slate-400">Zone: ${escapeHtml(grp.zone)}</div>
         </td>
-        <td class="p-3 max-w-[200px]">
-          <div class="font-bold text-slate-800 dark:text-slate-200 truncate" title="${escapeAttr(grp.customerType)}">
-            ${escapeHtml(grp.customerType)}
+       <td class="p-3 max-w-[200px]">
+          <div class="font-bold text-slate-800 dark:text-slate-200 truncate" 
+               title="${escapeAttr(`${grp.customerName || '-'} (${grp.customerType || '-'})`)}">
+            <span>${escapeHtml(grp.customerName || '-')}</span>
+            <span class="text-xs font-normal text-slate-500 dark:text-slate-400">(${escapeHtml(grp.customerType || '-')})</span>
           </div>
-          <div class="text-[10px] text-slate-400 truncate mt-0.5" title="${escapeAttr(grp.productCat)}">
-            ${escapeHtml(grp.productCat)}
+          <div class="text-[10px] text-slate-400 truncate mt-0.5" title="${escapeAttr(grp.productCat || '-')}">
+            ${escapeHtml(grp.productCat || '-')}
           </div>
         </td>
         <td class="p-3 whitespace-nowrap">
