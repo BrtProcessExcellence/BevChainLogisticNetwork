@@ -107,18 +107,37 @@ function getCurvePoints(lat1, lng1, lat2, lng2, offset = 0) {
 // 2. MAP INITIALIZATION & TILES
 // ==============================================================================
 function initMaps() {
-  const mapOptions = { zoomControl: false, attributionControl: false, preferCanvas: true };
+  console.debug('[MAP] initMaps started');
+
+  const mapOptions = {
+    zoomControl: false,
+    attributionControl: false,
+    preferCanvas: true,
+    fadeAnimation: false,
+    zoomAnimation: false,
+    markerZoomAnimation: false
+  };
 
   const dashContainer = document.getElementById('map-dashboard');
-  if (dashContainer) {
-    if (dashMap) { dashMap.remove(); dashMap = null; }
-    dashMap = L.map('map-dashboard', mapOptions).setView([13.75, 100.5], 6);
+
+  if (dashContainer && !dashMap) {
+    console.debug('[MAP] Creating dashboard map');
+
+    dashMap = L.map('map-dashboard', mapOptions)
+      .setView([13.75, 100.5], 6);
+
     dashLayerGrp = L.layerGroup().addTo(dashMap);
     initMapPanes(dashMap);
 
-    // สร้าง Canvas Renderers แยกตาม Layer
-    routeCanvasRenderer = L.canvas({ pane: 'routePane', padding: 0.5 });
-    dotCanvasRenderer = L.canvas({ pane: 'destDotPane', padding: 0.5 });
+    routeCanvasRenderer = L.canvas({
+      pane: 'routePane',
+      padding: 0.5
+    });
+
+    dotCanvasRenderer = L.canvas({
+      pane: 'destDotPane',
+      padding: 0.5
+    });
   }
 
   const simContainer = document.getElementById('map-simulation');
@@ -137,6 +156,7 @@ function initMaps() {
   }
 
   updateMapTiles();
+  console.debug('[MAP] initMaps completed');
 }
 
 function initMapPanes(map) {
@@ -679,7 +699,11 @@ function renderDashboardLayersByMode(filteredData = []) {
 }
 
 function drawDashboardRoutes(filteredData = []) {
-  if (typeof dashMap === 'undefined' || !dashMap) return;
+  if (!dashMap) return;
+
+  const renderToken = mapRenderRequestId;
+
+  console.debug('[MAP] Drawing routes:', filteredData.length);
 
   if (dashLayerGrp) {
     dashLayerGrp.clearLayers();
@@ -690,7 +714,7 @@ function drawDashboardRoutes(filteredData = []) {
   routePolylineMap = {};
   currentHighlightedKey = null;
 
-  if (!filteredData || filteredData.length === 0) return;
+  if (!filteredData.length) return;
 
   const mapContainer = dashMap.getContainer();
   if (mapContainer && (mapContainer.offsetWidth === 0 || mapContainer.offsetHeight === 0)) {
@@ -758,6 +782,7 @@ function drawDashboardRoutes(filteredData = []) {
   const isDarkTheme = isDarkMode();
 
   Object.values(routeMap).forEach((route, index) => {
+    if (renderToken !== mapRenderRequestId) return;
     const originCoords = resolveLocationCoords(route.from);
     const destCoords = resolveDestinationCoords(route.rawRow || {
       'Description(Ship-To (Outbound))': route.to,
@@ -766,6 +791,10 @@ function drawDashboardRoutes(filteredData = []) {
       dest_lat: route.rawRow?.dest_lat,
       dest_lng: route.rawRow?.dest_lng
     });
+    if (renderToken !== mapRenderRequestId) {
+    console.debug('[MAP] Drawing interrupted by newer request');
+    return;
+  }
 
     if (!originCoords || !destCoords || 
         !isValidThailandCoord(originCoords[0], originCoords[1]) || 
@@ -900,6 +929,7 @@ function drawDashboardRoutes(filteredData = []) {
   if (allBoundsPoints.length > 0) {
     dashMap.fitBounds(L.latLngBounds(allBoundsPoints), { padding: [60, 60], maxZoom: 10 });
   }
+  console.debug('[MAP] Drawing completed:', Object.keys(routePolylineMap).length);
 }
 
 function highlightMapRoute(targetKey) {
@@ -1368,3 +1398,89 @@ async function fetchRouteMasterData(forceRefresh = false) {
 
   return window.globalRouteSheetData;
 }
+// ...existing code...
+
+let mapRenderRequestId = 0;
+let lastMapRenderSignature = '';
+
+function getMapRenderSignature(filteredData = []) {
+  const mode = state?.activeFilters?.displayMode || 'routes';
+  const metric = state?.activeFilters?.heatMetric || 'all';
+
+  const first = filteredData[0]?._parsed?.searchIndex || '';
+  const last = filteredData[filteredData.length - 1]?._parsed?.searchIndex || '';
+
+  return `${mode}|${metric}|${filteredData.length}|${first}|${last}`;
+}
+
+function runWhenIdle(callback) {
+  if ('requestIdleCallback' in window) {
+    return window.requestIdleCallback(callback, { timeout: 500 });
+  }
+
+  return window.setTimeout(callback, 80);
+}
+
+function cancelIdleTask(taskId) {
+  if (!taskId) return;
+
+  if ('cancelIdleCallback' in window) {
+    window.cancelIdleCallback(taskId);
+  } else {
+    window.clearTimeout(taskId);
+  }
+}
+
+// ...existing code...
+
+let pendingMapIdleTask = null;
+
+function updateMapDisplay(filteredData = []) {
+  if (!dashMap) return;
+
+  const signature = getMapRenderSignature(filteredData);
+
+  // ไม่วาดซ้ำ ถ้าข้อมูลและโหมดเหมือนเดิม
+  if (signature === lastMapRenderSignature) {
+    console.debug('[MAP] Render skipped: same data signature');
+    return;
+  }
+
+  lastMapRenderSignature = signature;
+
+  // ยกเลิกงานวาดรอบก่อน
+  mapRenderRequestId += 1;
+  const currentRequestId = mapRenderRequestId;
+
+  if (pendingMapIdleTask) {
+    cancelIdleTask(pendingMapIdleTask);
+  }
+
+  pendingMapIdleTask = runWhenIdle(() => {
+    if (currentRequestId !== mapRenderRequestId) {
+      console.debug('[MAP] Stale render cancelled');
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      if (currentRequestId !== mapRenderRequestId) return;
+
+      console.time('[MAP] Render dashboard layers');
+
+      if (!dashMap._loaded) {
+        dashMap.whenReady(() => {
+          if (currentRequestId === mapRenderRequestId) {
+            renderDashboardLayersByMode(filteredData);
+          }
+        });
+      } else {
+        renderDashboardLayersByMode(filteredData);
+      }
+
+      console.timeEnd('[MAP] Render dashboard layers');
+    });
+  });
+}
+
+
+// ...existing code...

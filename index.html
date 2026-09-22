@@ -34,6 +34,21 @@
 
 <body class="bg-slate-50 dark:bg-zinc-950 text-slate-800 dark:text-white transition-colors duration-500 overflow-hidden font-sans selection:bg-orange-500/30">
   
+  <!-- ==============================================================================
+     GLOBAL SPINNER LOADER (แสดงทันทีเมื่อเปิดหน้า / F5 / โหลดข้อมูล)
+============================================================================== -->
+<div id="app-global-loader" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white/80 dark:bg-zinc-950/85 backdrop-blur-sm transition-opacity duration-500 ease-out">
+  <div class="relative flex items-center justify-center">
+    <!-- วงแหวนหลัก (หมุนตามเข็ม สีส้ม) -->
+    <div class="w-14 h-14 rounded-full border-4 border-slate-200 dark:border-zinc-800 border-t-[#ff5e00] animate-spin"></div>
+    <!-- วงแหวนด้านใน (หมุนทวนเข็ม) -->
+    <div class="absolute w-8 h-8 rounded-full border-2 border-slate-100 dark:border-zinc-800 border-b-[#f97316] animate-spin" style="animation-direction: reverse; animation-duration: 0.85s;"></div>
+  </div>
+  <!-- ข้อความสถานะ -->
+  <p id="app-loader-text" class="mt-4 text-xs font-bold tracking-wider text-slate-600 dark:text-slate-300 font-sans animate-pulse">
+    กำลังโหลดข้อมูลระบบ...
+  </p>
+</div>
   <!-- LOGIN SCREEN -->
   <div id="login-screen" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-50 dark:bg-zinc-950 transition-opacity duration-500">
     <div class="relative w-full max-w-md p-8 bg-white dark:bg-zinc-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 text-center animate-slide-up">

@@ -273,17 +273,17 @@ const LOGISTICS_DICT = {
   'กทม.': 'BKK',
 
   // --- แผนที่ & ตัวกรอง (MAP & FILTERS) ---
-  'เส้นทางทั้งหมด': 'All Routes',
-  'ความหนาแน่นของเส้นทาง': 'Trip Density',
-  'โควตาว่าง': 'Available Backhaul',
-  'งานเต็ม': 'Full / 0% Available',
-  'ต้นทาง': 'Origin',
-  'ปลายทาง': 'Destination',
-  'จังหวัด': 'Province',
-  'โซน': 'Zone',
-  'ภาค': 'Region',
-  'ค้นหา': 'Search',
-  'ทั้งหมด': 'All',
+  // 'เส้นทางทั้งหมด': 'All Routes',
+  // 'ความหนาแน่นของเส้นทาง': 'Trip Density',
+  // 'โควตาว่าง': 'Available Backhaul',
+  // 'งานเต็ม': 'Full / 0% Available',
+  // 'ต้นทาง': 'Origin',
+  // 'ปลายทาง': 'Destination',
+  // 'จังหวัด': 'Province',
+  // 'โซน': 'Zone',
+  // 'ภาค': 'Region',
+  // 'ค้นหา': 'Search',
+  // 'ทั้งหมด': 'All',
 
   // --- ประเภทรถ (TRUCK TYPES) ---
   'ประเภทรถ': 'Truck Type',
@@ -297,23 +297,23 @@ const LOGISTICS_DICT = {
   'รถเทรลเลอร์': 'Trailer',
   'หัวลาก': 'Prime Mover',
 
-  // --- ข้อมูลตาราง & งานขนส่ง (OPERATIONS & KPI) ---
-  'ผู้รับเหมา': 'Carriers',
-  'ประเภทรถ': 'Truck Type',
-  'ประเภทสินค้า': 'Product Category',
-  'ลูกค้า': 'Customer',
-  'ประเภทลูกค้า': 'Customer Type',
-  'เที่ยว/สัปดาห์': 'Trips/Wk',
-  'เที่ยวว่าง': 'Available Trips',
-  'ภาระงานรวม': 'Total Workload',
-  'สัดส่วนรถว่าง': 'Available Proportion',
-  'งานบุญรอด': 'Boonrawd Task',
-  'งานของผู้รับเหมาเอง': 'Own Task',
-  'งานนอกของ BRF': 'BRF External',
-  'ระบุต้นทาง และ ปลายทาง งานนอกของ BRF': 'External Route Details',
-  'ไม่มีเส้นทางวิ่ง': 'No Routes Available',
-  'ไม่พบข้อมูล': 'No Data Found',
-  'ไม่ระบุ': 'Unspecified'
+  // // --- ข้อมูลตาราง & งานขนส่ง (OPERATIONS & KPI) ---
+  // 'ผู้รับเหมา': 'Carriers',
+  // 'ประเภทรถ': 'Truck Type',
+  // 'ประเภทสินค้า': 'Product Category',
+  // 'ลูกค้า': 'Customer',
+  // 'ประเภทลูกค้า': 'Customer Type',
+  // 'เที่ยว/สัปดาห์': 'Trips/Wk',
+  // 'เที่ยวว่าง': 'Available Trips',
+  // 'ภาระงานรวม': 'Total Workload',
+  // 'สัดส่วนรถว่าง': 'Available Proportion',
+  // 'งานบุญรอด': 'Boonrawd Task',
+  // 'งานของผู้รับเหมาเอง': 'Own Task',
+  // 'งานนอกของ BRF': 'BRF External',
+  // 'ระบุต้นทาง และ ปลายทาง งานนอกของ BRF': 'External Route Details',
+  // 'ไม่มีเส้นทางวิ่ง': 'No Routes Available',
+  // 'ไม่พบข้อมูล': 'No Data Found',
+  // 'ไม่ระบุ': 'Unspecified'
 };
 
 // สร้างพจนานุกรมแปลกลับ (EN -> TH) อัตโนมัติ

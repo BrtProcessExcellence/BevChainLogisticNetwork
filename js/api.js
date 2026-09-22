@@ -5,7 +5,7 @@
  */
 
 const API_CONFIG = {
-  BATCH_SIZE: 1000, 
+  BATCH_SIZE: 50000, 
   TABLES: {
     ROUTES_VIEW: 'view_routes_with_coords',
     EXEC_SUMMARY_VIEW: 'view_exec_province_summary',
@@ -52,6 +52,7 @@ function getDbClient() {
 
   const supabaseLib = window.supabase;
   const config = typeof CONFIG !== 'undefined' ? CONFIG : null;
+  console.log("supabaseLib",supabaseLib) ;
 
   if (!supabaseLib || !config?.SUPABASE_URL || !config?.SUPABASE_KEY) {
     console.error('Supabase library or CONFIG is not properly initialized.');
@@ -60,6 +61,7 @@ function getDbClient() {
 
   window._supabaseDbInstance = supabaseLib.createClient(config.SUPABASE_URL, config.SUPABASE_KEY);
   return window._supabaseDbInstance;
+  
 }
 
 function parseCoordinate(latVal, lngVal) {
@@ -71,8 +73,84 @@ function parseCoordinate(latVal, lngVal) {
 /**
  * 1. ดึงข้อมูลเส้นทางหลักแบบ Dynamic Batch (ดึงครบทุกแถวแน่นอน ไม่โดนตัดที่ 15,000)
  */
+// async function fetchNewRouteSheet(limit = null) {
+//   if (inFlightRouteFetchPromise) {
+//     return inFlightRouteFetchPromise;
+//   }
+
+//   inFlightRouteFetchPromise = (async () => {
+//     const db = getDbClient();
+//     if (!db) return [];
+
+//     try {
+//       // 💡 กรณีต้องการดึงเฉพาะชุดเริ่มต้น (Fast Preview)
+//       if (limit && typeof limit === 'number') {
+//         const { data, error } = await db
+//           .from(API_CONFIG.TABLES.ROUTES_VIEW)
+//           .select(API_CONFIG.ROUTE_COLUMNS)
+//           .order('id', { ascending: true })
+//           .limit(limit);
+
+//         if (error) throw error;
+//         window.globalRouteSheetData = data || [];
+//         return window.globalRouteSheetData;
+//       }
+//   console.log("db",db) ;
+
+
+//       // 💡 ดึงแบบ Dynamic Batch วนลูปจนกว่าจะได้ข้อมูลครบทุกแถว
+//       const step = API_CONFIG.BATCH_SIZE || 5000;
+//       let combinedData = [];
+//       let from = 0;
+//       let hasMore = true;
+
+//       while (hasMore) {
+//         const to = from + step - 1;
+
+//         const { data, error } = await db
+//           .from(API_CONFIG.TABLES.ROUTES_VIEW)
+//           .select(API_CONFIG.ROUTE_COLUMNS)
+//           .order('id', { ascending: true })
+//           .range(from, to);
+
+//         if (error) throw error;
+
+//         if (data && data.length > 0) {
+//           combinedData = combinedData.concat(data);
+          
+//           // ถ้าข้อมูลที่คืนกลับมาน้อยกว่าขนาด Batch แสดงว่าถึงแถวสุดท้ายแล้ว
+//           if (data.length < step) {
+//             hasMore = false;
+//           } else {
+//             from += step;
+//           }
+//         } else {
+//           hasMore = false;
+//         }
+//       }
+
+//       window.globalRouteSheetData = combinedData;
+//       return combinedData;
+//     } catch (err) {
+//       console.error('Error fetching routes from view_routes_with_coords:', err);
+//       return window.globalRouteSheetData || [];
+//     } finally {
+//       inFlightRouteFetchPromise = null;
+//     }
+//   })();
+
+//   return inFlightRouteFetchPromise;
+// }
+
+/**
+ * 1. ดึงข้อมูลเส้นทางหลักแบบ Dynamic Batch พร้อมระบบ Cache และ Tracking
+ */
 async function fetchNewRouteSheet(limit = null) {
+  console.log('[API] 🚀 Start fetchNewRouteSheet()');
+  console.time('[API] ⏱️ fetchNewRouteSheet Duration');
+
   if (inFlightRouteFetchPromise) {
+    console.log('[API] ⏳ Promise already in flight, waiting...');
     return inFlightRouteFetchPromise;
   }
 
@@ -81,7 +159,31 @@ async function fetchNewRouteSheet(limit = null) {
     if (!db) return [];
 
     try {
-      // 💡 กรณีต้องการดึงเฉพาะชุดเริ่มต้น (Fast Preview)
+      // 💡 1. ตรวจสอบ Memory Cache ก่อน (ลดเวลาเหลือ 0ms)
+      if (window.globalRouteSheetData && window.globalRouteSheetData.length > 0) {
+        console.log(`[API] ✅ Loaded from Memory Cache (${window.globalRouteSheetData.length} rows)`);
+        console.timeEnd('[API] ⏱️ fetchNewRouteSheet Duration');
+        return window.globalRouteSheetData;
+      }
+
+      // 💡 2. ตรวจสอบ SessionStorage Cache (ลดเวลา API สลับหน้าเว็บเหลือ < 50ms)
+      const CACHE_KEY = 'cache_routes_data';
+      const storedData = sessionStorage.getItem(CACHE_KEY);
+      if (storedData) {
+        try {
+          const parsed = JSON.parse(storedData);
+          console.log(`[API] ✅ Loaded from SessionStorage (${parsed.length} rows)`);
+          window.globalRouteSheetData = parsed;
+          console.timeEnd('[API] ⏱️ fetchNewRouteSheet Duration');
+          return parsed;
+        } catch (e) {
+          console.warn('[API] ⚠️ Cache parse error, refetching...', e);
+          sessionStorage.removeItem(CACHE_KEY);
+        }
+      }
+
+      // 💡 3. หากไม่มี Cache ให้ดึงจาก Supabase
+      console.log('[API] 📡 Fetching fresh data from Supabase...');
       if (limit && typeof limit === 'number') {
         const { data, error } = await db
           .from(API_CONFIG.TABLES.ROUTES_VIEW)
@@ -94,14 +196,15 @@ async function fetchNewRouteSheet(limit = null) {
         return window.globalRouteSheetData;
       }
 
-      // 💡 ดึงแบบ Dynamic Batch วนลูปจนกว่าจะได้ข้อมูลครบทุกแถว
       const step = API_CONFIG.BATCH_SIZE || 5000;
       let combinedData = [];
       let from = 0;
       let hasMore = true;
+      let batchCount = 1;
 
       while (hasMore) {
         const to = from + step - 1;
+        console.log(`[API] 🔄 Fetching Batch #${batchCount} (Rows: ${from} - ${to})...`);
 
         const { data, error } = await db
           .from(API_CONFIG.TABLES.ROUTES_VIEW)
@@ -113,22 +216,32 @@ async function fetchNewRouteSheet(limit = null) {
 
         if (data && data.length > 0) {
           combinedData = combinedData.concat(data);
-          
-          // ถ้าข้อมูลที่คืนกลับมาน้อยกว่าขนาด Batch แสดงว่าถึงแถวสุดท้ายแล้ว
+          console.log(`[API] ✔️ Batch #${batchCount} received ${data.length} rows.`);
           if (data.length < step) {
             hasMore = false;
           } else {
             from += step;
+            batchCount++;
           }
         } else {
           hasMore = false;
         }
       }
 
+      console.log(`[API] ✅ DB Fetch Complete. Total: ${combinedData.length} rows.`);
+
+      // บันทึกลง Cache
+      try {
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(combinedData));
+      } catch (err) {
+        console.warn('[API] ⚠️ SessionStorage quota exceeded. Using memory only.');
+      }
+
       window.globalRouteSheetData = combinedData;
+      console.timeEnd('[API] ⏱️ fetchNewRouteSheet Duration');
       return combinedData;
     } catch (err) {
-      console.error('Error fetching routes from view_routes_with_coords:', err);
+      console.error('[API] ❌ Error fetching routes:', err);
       return window.globalRouteSheetData || [];
     } finally {
       inFlightRouteFetchPromise = null;
@@ -139,9 +252,25 @@ async function fetchNewRouteSheet(limit = null) {
 }
 
 /**
- * 2. ดึงข้อมูลสรุปรายจังหวัดสำหรับ Executive Dashboard (เร็วมาก < 200ms)
+ * 2. ดึงข้อมูลสรุปรายจังหวัด พร้อมระบบ Cache
  */
 async function fetchExecProvinceSummary() {
+  console.log('[API] 🚀 Start fetchExecProvinceSummary()');
+  console.time('[API] ⏱️ fetchExecProvinceSummary Duration');
+  
+  const CACHE_KEY = 'cache_exec_summary';
+  const stored = sessionStorage.getItem(CACHE_KEY);
+  
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      console.log('[API] ✅ Exec Summary loaded from cache');
+      window.execRouteSummaryData = parsed;
+      console.timeEnd('[API] ⏱️ fetchExecProvinceSummary Duration');
+      return parsed;
+    } catch(e) { sessionStorage.removeItem(CACHE_KEY); }
+  }
+
   const db = getDbClient();
   if (!db) return [];
 
@@ -152,12 +281,37 @@ async function fetchExecProvinceSummary() {
 
     if (error) throw error;
     window.execRouteSummaryData = data || [];
+    
+    try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch(e) {}
+    
+    console.timeEnd('[API] ⏱️ fetchExecProvinceSummary Duration');
     return window.execRouteSummaryData;
   } catch (err) {
-    console.error('Error fetching province summary view:', err);
+    console.error('[API] ❌ Error fetching province summary view:', err);
     return [];
   }
 }
+
+// /**
+//  * 2. ดึงข้อมูลสรุปรายจังหวัดสำหรับ Executive Dashboard (เร็วมาก < 200ms)
+//  */
+// async function fetchExecProvinceSummary() {
+//   const db = getDbClient();
+//   if (!db) return [];
+
+//   try {
+//     const { data, error } = await db
+//       .from(API_CONFIG.TABLES.EXEC_SUMMARY_VIEW)
+//       .select('*');
+
+//     if (error) throw error;
+//     window.execRouteSummaryData = data || [];
+//     return window.execRouteSummaryData;
+//   } catch (err) {
+//     console.error('Error fetching province summary view:', err);
+//     return [];
+//   }
+// }
 
 /**
  * 3. ดึงพิกัดจุดต้นทาง (Origin DCs / Plants)
@@ -248,7 +402,10 @@ async function fetchExecutiveSummaryKPI() {
   try {
     const { data, error } = await db.rpc(API_CONFIG.RPC.EXEC_KPI);
     if (error) throw error;
-    return data;
+    return data;  
+    console.log("data",data) ;
+
+    
   } catch (err) {
     return null;
   }

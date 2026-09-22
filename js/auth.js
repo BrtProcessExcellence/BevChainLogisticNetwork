@@ -209,6 +209,50 @@ async function initializeAuthSession() {
     showLoginScreen();
   }
 }
+// ...existing code...
+
+let isDashboardInitialized = false;
+
+async function handleUserAuthenticated(user) {
+  if (!user) return;
+
+  console.log('[AUTH] User authenticated:', user.email);
+
+  const loginScreen = document.getElementById('login-screen');
+  const app = document.getElementById('main-app');
+
+  if (loginScreen) {
+    loginScreen.classList.add('hidden', 'opacity-0', 'pointer-events-none');
+    loginScreen.style.display = 'none';
+  }
+
+  if (app) {
+    app.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+    app.style.display = 'flex';
+  }
+
+  updateUserProfileUI(user);
+
+  if (isDashboardInitialized) {
+    console.log('[AUTH] Dashboard initialization skipped');
+    return;
+  }
+
+  isDashboardInitialized = true;
+  console.log('[AUTH] Dashboard initialization started');
+
+  try {
+    if (typeof initAppAfterLogin === 'function') {
+      await initAppAfterLogin();
+    }
+    console.log('[AUTH] Dashboard initialization completed');
+  } catch (err) {
+    isDashboardInitialized = false;
+    console.error('[AUTH] Dashboard initialization failed:', err);
+  }
+}
+
+// ...existing code...
 
 // ผูก Event Listener เมื่อ DOM โหลดเสร็จ
 document.addEventListener('DOMContentLoaded', () => {

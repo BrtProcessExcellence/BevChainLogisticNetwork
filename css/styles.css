@@ -20,7 +20,37 @@
   --scrollbar-thumb: #cbd5e1;
   --scrollbar-thumb-dark: #334155;
 }
+#app-global-loader {
+  opacity: 1;
+  visibility: visible;
+}
 
+#app-global-loader.loader-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+/* ...existing code... */
+
+#map-dashboard,
+#map-exec-heatmap,
+#map-simulation {
+  contain: layout paint size;
+  isolation: isolate;
+}
+
+.leaflet-container {
+  text-rendering: optimizeSpeed;
+  -webkit-font-smoothing: antialiased;
+}
+
+.hub-badge,
+.flow-line,
+.node-pulse-dot {
+  will-change: transform;
+}
+
+/* ...existing code... */
 /* ==============================================================================
    2. BASE & RESET STYLES
    ============================================================================== */
