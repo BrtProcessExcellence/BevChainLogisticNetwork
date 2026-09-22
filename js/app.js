@@ -165,55 +165,92 @@ function showToast(msg) {
   }
 }
 
+
 function precomputeRouteData(routes) {
   if (!Array.isArray(routes) || routes.length === 0) return [];
-  
+
+  // Helper สำหรับจัดหมวดหมู่ประเภทรถให้เป็นมาตรฐาน
+  const normalizeTruckType = (raw) => {
+    if (!raw) return 'อื่นๆ';
+    const s = String(raw).toLowerCase();
+    if (s.includes('4') || s.includes('4w')) return '4 ล้อ';
+    if (s.includes('6') || s.includes('6w')) return '6 ล้อ';
+    if (s.includes('10') || s.includes('10w')) return '10 ล้อ';
+    if (s.includes('เทรล') || s.includes('trailer') || s.includes('ลาก')) return 'เทรลเลอร์';
+    return 'อื่นๆ';
+  };
+
   return routes.map(row => {
+    // 1. ดึงและคลีนค่าข้อความหลัก พร้อม Fallback ทั้งภาษาไทยและอังกฤษ
     const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
-    const destProv = String(row.province || row['จังหวัด'] || '-').trim();
+    const rawProv = String(row.province || row['จังหวัด'] || '-').trim();
+    const destProv = typeof normalizeProvName === 'function' ? normalizeProvName(rawProv) : rawProv;
+
     let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
     if (!shipTo || shipTo === '-') shipTo = destProv;
 
-    const trips = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
-    const totalPct = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    const customer = String(row.customer_name || row['ลูกค้า'] || '-').trim();
+    const customerType = String(row.customer_type || row['ประเภทลูกค้า'] || '-').trim();
+    const product = String(row.product_category || row['ประเภทสินค้า'] || '-').trim();
+    const zone = String(row.zone || row['Zone'] || row['โซน'] || row['ภาค'] || row.region || '-').trim();
+    const truck = String(row.truck_type || row['ประเภทรถ'] || '-').trim();
+    const carrier = String(row.fwd_agent_desc || row['Description(FwdAgent)'] || 'ไม่ระบุ').trim();
+
+    // 2. คำนวณตัวเลขเที่ยววิ่งและสถานะความจุว่าง
+    const trips = typeof parseNum === 'function'
+      ? parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0)
+      : (parseFloat(row.avg_trip_week || row['AVG Trip/Week']) || 0);
+
+    const totalPct = typeof parseNum === 'function'
+      ? parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0)
+      : (parseFloat(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)']) || 0);
+
     const availPct = Math.max(0, 100 - totalPct);
-    const availTrips = trips * (availPct / 100);
+    const availTrips = trips * (availPct / 100.0);
+    const hasAvail = availPct > 0;
 
-    const cleanOrigin = cleanAllSpaces(origin);
-    const cleanCustomer = cleanAllSpaces(row.customer_name || row['ลูกค้า'] || '-');
-    const cleanCustomerType = cleanAllSpaces(row.customer_type || row['ประเภทลูกค้า'] || '-');
-    const cleanProduct = cleanAllSpaces(row.product_category || row['ประเภทสินค้า'] || '-');
-    const cleanProv = cleanAllSpaces(destProv);
-    const cleanZone = cleanAllSpaces(row.zone || row['Zone'] || '-');
-    const cleanTruck = cleanAllSpaces(row.truck_type || row['ประเภทรถ'] || '-');
-    const cleanShipTo = cleanAllSpaces(shipTo);
-    const cleanCarrier = cleanAllSpaces(row.fwd_agent_desc || row['Description(FwdAgent)'] || '');
+    // 3. จัดทำ Clean String สำหรับใช้เปรียบเทียบและ Grouping
+    const cleanOrigin = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(origin) : origin;
+    const cleanCustomer = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(customer) : customer;
+    const cleanCustomerType = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(customerType) : customerType;
+    const cleanProduct = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(product) : product;
+    const cleanProv = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(destProv) : destProv;
+    const cleanZone = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(zone) : zone;
+    const cleanTruck = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(truck) : truck;
+    const cleanShipTo = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(shipTo) : shipTo;
+    const cleanCarrier = typeof cleanAllSpaces === 'function' ? cleanAllSpaces(carrier) : carrier;
 
+    // 4. จัดหมวดประเภทรถ และสร้าง Unique Keys
+    const truckCategory = normalizeTruckType(truck);
     const distinctKey = [cleanOrigin, cleanCustomer, cleanCustomerType, cleanProduct, cleanProv, cleanZone, cleanTruck, cleanShipTo].join('__');
     const mapRouteKey = `${cleanOrigin}__${cleanShipTo}`;
-    const searchIndex = `${row.id || ''} ${origin} ${destProv} ${row.customer_name || ''} ${row.fwd_agent_desc || ''}`.toLowerCase();
 
-    return {
-      ...row,
-      _parsed: {
-        trips,
-        totalPct,
-        availPct,
-        availTrips,
-        cleanOrigin,
-        cleanCustomer,
-        cleanCustomerType,
-        cleanProduct,
-        cleanProv,
-        cleanZone,
-        cleanTruck,
-        cleanShipTo,
-        cleanCarrier,
-        distinctKey,
-        mapRouteKey,
-        searchIndex
-      }
+    // 5. Search Index ครอบคลุมทุกฟิลด์ที่ผู้ใช้มีโอกาสค้นหา
+    const searchIndex = `${row.id || ''} ${origin} ${destProv} ${customer} ${shipTo} ${carrier} ${truck} ${truckCategory} ${product} ${zone}`.toLowerCase();
+
+    // 💡 กำหนดค่าลง _parsed โดยไม่ Spread Object เพื่อความเร็วและประหยัด RAM
+    row._parsed = {
+      trips,
+      totalPct,
+      availPct,
+      availTrips,
+      hasAvail,
+      truckCategory,
+      cleanOrigin,
+      cleanCustomer,
+      cleanCustomerType,
+      cleanProduct,
+      cleanProv,
+      cleanZone,
+      cleanTruck,
+      cleanShipTo,
+      cleanCarrier,
+      distinctKey,
+      mapRouteKey,
+      searchIndex
     };
+
+    return row;
   });
 }
 
@@ -352,6 +389,7 @@ async function updateExecutiveDashboard(filteredData = []) {
   if (typeof renderExecRouteHeatmap === 'function') {
     renderExecRouteHeatmap(window.globalRouteSheetData);
   }
+  
 
   setTimeout(() => {
     if (typeof execMap !== 'undefined' && execMap) execMap.invalidateSize();
@@ -560,77 +598,125 @@ function renderExecZoneSummaryList(zoneSummaryMap) {
   `).join('');
 }
 
-function renderExecTruckAvailList(truckAvailMap) {
-  const truckListEl = document.getElementById('exec-truck-avail-list');
-  if (!truckListEl) return;
+// ==============================================================================
+// TRUCK TYPE AVAILABILITY CONTROLLER (SYNCED WITH SELECTED REGION)
+// ==============================================================================
 
-  const sortedTrucks = Object.entries(truckAvailMap).map(([type, stat]) => ({
-    type,
-    totalRoutes: stat.totalRoutes,
-    availRoutes: stat.availRoutes,
-    totalTrips: stat.totalTrips,
-    availTrips: stat.availTrips,
-    availRatio: stat.totalRoutes > 0 ? (stat.availRoutes / stat.totalRoutes) * 100 : 0
-  })).sort((a, b) => b.availRoutes - a.availRoutes);
+/**
+ * รวมสถิติรถว่างแยกตามประเภทรถ (4 ล้อ, 6 ล้อ, 10 ล้อ, เทรลเลอร์)
+ * @param {Array} routes - รายการเส้นทาง (ของภาคที่เลือก หรือทั้งประเทศ)
+ */
+function buildTruckAvailMap(routes = []) {
+  // แม่แบบประเภทรถหลัก
+  const truckStats = {
+    '4 ล้อ': { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 },
+    '6 ล้อ': { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 },
+    '10 ล้อ': { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 },
+    'เทรลเลอร์': { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 }
+  };
 
-  // 💡 กรณีตัวกรองจังหวัดที่เลือก ไม่มีข้อมูลประเภทรถ
-  if (sortedTrucks.length === 0) {
-    truckListEl.innerHTML = `
-      <div class="col-span-full py-8 text-center text-xs text-slate-400 font-sans border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-zinc-900/50">
-        ไม่พบข้อมูลประเภทรถสำหรับจังหวัดที่เลือก
-      </div>
-    `;
-    return;
-  }
+  routes.forEach(row => {
+    // 💡 ดึงชื่อประเภทรถรองรับทุกรูปแบบ (truck_type, ประเภทรถ, truckType)
+    const rawType = String(row.truck_type || row['ประเภทรถ'] || row.truckType || '').trim();
+    if (!rawType || rawType === '-') return;
 
-  truckListEl.innerHTML = sortedTrucks.map(item => {
-    const color = getAvailColorScale(item.availRatio);
-    const radius = 18;
-    const circumference = 2 * Math.PI * radius;
-    const offset = circumference - (Math.min(item.availRatio, 100) / 100) * circumference;
+    // จับคู่ประเภทรถให้เข้าหมวดหมู่หลัก
+    let targetCategory = null;
+    if (rawType.includes('4') || rawType.toLowerCase().includes('4w')) targetCategory = '4 ล้อ';
+    else if (rawType.includes('6') || rawType.toLowerCase().includes('6w')) targetCategory = '6 ล้อ';
+    else if (rawType.includes('10') || rawType.toLowerCase().includes('10w')) targetCategory = '10 ล้อ';
+    else if (rawType.includes('เทรล') || rawType.toLowerCase().includes('trailer') || rawType.includes('ลาก')) targetCategory = 'เทรลเลอร์';
+
+    if (!targetCategory) return;
+
+    // คำนวณเที่ยววิ่งและ % ว่าง
+    const trips = row._parsed?.trips ?? (parseFloat(String(row.avg_trip_week || row['AVG Trip/Week'] || 0).replace(/[, ]/g, '')) || 0);
+    const pctTotal = row._parsed?.pctTotal ?? (parseFloat(String(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || 0).replace(/[% ]/g, '')) || 0);
+    const availPct = Math.max(0, 100 - pctTotal);
+    const availTrips = trips * (availPct / 100.0);
+
+    truckStats[targetCategory].totalRoutes += 1;
+    truckStats[targetCategory].totalTrips += trips;
+
+    if (availPct > 0) {
+      truckStats[targetCategory].availRoutes += 1;
+      truckStats[targetCategory].availTrips += availTrips;
+    }
+  });
+
+  return truckStats;
+}
+
+/**
+ * นำข้อมูลสถิติประเภทรถไปเรนเดอร์ลง UI
+ */
+function renderExecTruckAvailList(truckMap) {
+  const container = document.getElementById('exec-truck-avail-list');
+  if (!container || !truckMap) return;
+
+  const truckList = [
+    { key: '4 ล้อ', label: '4-Wheeler (4 ล้อ)', icon: 'truck' },
+    { key: '6 ล้อ', label: '6-Wheeler (6 ล้อ)', icon: 'truck' },
+    { key: '10 ล้อ', label: '10-Wheeler (10 ล้อ)', icon: 'truck' },
+    { key: 'เทรลเลอร์', label: 'Trailer (เทรลเลอร์)', icon: 'container' }
+  ];
+
+  container.innerHTML = truckList.map(item => {
+    const stat = truckMap[item.key] || { totalRoutes: 0, availRoutes: 0, availTrips: 0 };
+    const availPct = stat.totalRoutes > 0 ? (stat.availRoutes / stat.totalRoutes) * 100 : 0;
+    
+    // กำหนดสีตามความจุว่าง
+    let colorClass = 'text-slate-400 dark:text-slate-500';
+    let bgBadge = 'bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-slate-400';
+    if (stat.totalRoutes > 0) {
+      if (availPct === 0) {
+        colorClass = 'text-slate-500';
+        bgBadge = 'bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300';
+      } else if (availPct <= 30) {
+        colorClass = 'text-red-500';
+        bgBadge = 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400';
+      } else if (availPct <= 70) {
+        colorClass = 'text-orange-500';
+        bgBadge = 'bg-orange-50 text-orange-600 dark:bg-orange-950/40 dark:text-orange-400';
+      } else {
+        colorClass = 'text-emerald-500';
+        bgBadge = 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400';
+      }
+    }
 
     return `
-      <div class="p-3.5 rounded-2xl bg-slate-50/70 dark:bg-zinc-950/70 border border-slate-200/80 dark:border-slate-800 hover:border-orange-500/60 hover:shadow-md transition-all font-sans flex flex-col justify-between space-y-3">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2 min-w-0">
-            <div class="w-8 h-8 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center text-orange-500 shadow-sm shrink-0">
-              <i data-lucide="truck" class="w-4 h-4"></i>
-            </div>
-            <div class="truncate">
-              <h5 class="text-xs font-black text-slate-800 dark:text-white truncate" title="${escapeAttr(item.type)}">${escapeHtml(item.type)}</h5>
-              <span class="text-[10px] font-semibold text-slate-400">${item.totalRoutes.toLocaleString()} Routes</span>
-            </div>
+      <div class="p-3 bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-slate-800 rounded-xl flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-orange-50 dark:bg-orange-950/40 flex items-center justify-center text-orange-600 dark:text-orange-400">
+            <i data-lucide="${item.icon}" class="w-4 h-4"></i>
           </div>
-
-          <div class="relative w-11 h-11 shrink-0 flex items-center justify-center">
-            <svg class="w-full h-full -rotate-90" viewBox="0 0 44 44">
-              <circle cx="22" cy="22" r="${radius}" class="stroke-slate-200 dark:stroke-zinc-800" stroke-width="3.5" fill="none" />
-              <circle cx="22" cy="22" r="${radius}" stroke="${color.hex}" stroke-width="3.5" stroke-linecap="round" fill="none"
-                style="stroke-dasharray: ${circumference}; stroke-dashoffset: ${offset}; transition: stroke-dashoffset 0.6s ease;" />
-            </svg>
-            <span class="absolute text-[9px] font-black text-slate-800 dark:text-white">${Math.round(item.availRatio)}%</span>
+          <div>
+            <div class="text-xs font-bold text-slate-800 dark:text-slate-200">${item.label}</div>
+            <div class="text-[10px] text-slate-400">
+              ${stat.totalRoutes.toLocaleString()} เส้นทาง (~${Math.round(stat.availTrips).toLocaleString()} เที่ยวว่าง/wk)
+            </div>
           </div>
         </div>
-
-        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/80 text-[10px]">
-          <div class="bg-white/80 dark:bg-zinc-900/80 p-2 rounded-xl border border-slate-100 dark:border-slate-800">
-            <span class="text-slate-400 block text-[9px] font-medium">Available Routes</span>
-            <strong class="${color.text} text-xs font-black">${item.availRoutes.toLocaleString()}</strong>
-          </div>
-          <div class="bg-white/80 dark:bg-zinc-900/80 p-2 rounded-xl border border-slate-100 dark:border-slate-800 text-right">
-            <span class="text-slate-400 block text-[9px] font-medium">Available Volume</span>
-            <strong class="text-slate-800 dark:text-slate-200 text-xs font-black">
-              ${Math.round(item.availTrips).toLocaleString()} <span class="text-[9px] text-slate-400 font-normal">trips/wk</span>
-              <span class="block text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold">(~${(item.availTrips / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</span>
-            </strong>
+        <div class="text-right">
+          <span class="text-xs font-black px-2 py-0.5 rounded-full ${bgBadge}">
+            ${stat.availRoutes.toLocaleString()} ว่าง
+          </span>
+          <div class="text-[10px] font-bold ${colorClass} mt-0.5">
+            ${availPct.toFixed(1)}%
           </div>
         </div>
       </div>
     `;
   }).join('');
 
-  if (typeof lucide !== 'undefined') lucide.createIcons({ root: truckListEl });
+  if (typeof lucide !== 'undefined') {
+    lucide.createIcons({ root: container });
+  }
 }
+
+// ผูกฟังก์ชันเข้ากับ window เพื่อให้เรียกใช้งานได้จากทุกที่
+window.buildTruckAvailMap = buildTruckAvailMap;
+window.renderExecTruckAvailList = renderExecTruckAvailList;
 
 function renderExecCarrierCapacity(carrierAvailMap, allRoutesList) {
   const availCapCountEl = document.getElementById('exec-avail-cap-count');
@@ -1612,13 +1698,50 @@ window.toggleRouteDetail = function(routeId) {
 };
 
 // ==============================================================================
-// 7. ZONE DRILLDOWN & DETAIL TABLE CONTROLLER (PROVINCE FILTER SYNCED & MAP FOCUSED)
+// 7. ZONE DRILLDOWN & DETAIL TABLE CONTROLLER (CLEAN & OPTIMIZED)
 // ==============================================================================
 
+/**
+ * Helper สกัดค่า % ว่างและเที่ยววิ่งสำหรับ Sort (อยู่นอก Loop เพื่อประสิทธิภาพสูงสุด)
+ */
+const getRouteAvailPct = (row) => {
+  if (row?._parsed && typeof row._parsed.availPct === 'number' && !isNaN(row._parsed.availPct)) {
+    return row._parsed.availPct;
+  }
+  const total = parseNum(row?.pct_total || row?.['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+  return Math.max(0, 100 - total);
+};
+
+const getRouteTrips = (row) => {
+  if (row?._parsed && typeof row._parsed.trips === 'number' && !isNaN(row._parsed.trips)) {
+    return row._parsed.trips;
+  }
+  return parseNum(row?.avg_trip_week || row?.['AVG Trip/Week'], 0);
+};
+
+/**
+ * Helper จัดการสไตล์ Active ของการ์ดภาคด้านซ้าย
+ */
+function updateActiveZoneCardUI(activeCardEl = null) {
+  document.querySelectorAll('#exec-region-summary-list > div').forEach(card => {
+    card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
+    card.classList.add('border-slate-200/90', 'dark:border-slate-800');
+  });
+
+  if (activeCardEl) {
+    activeCardEl.classList.remove('border-slate-200/90', 'dark:border-slate-800');
+    activeCardEl.classList.add('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
+  }
+}
+
+/**
+ * กรองข้อมูลเส้นทางตามตัวกรองจังหวัดที่เลือก
+ */
 function getExecFilteredRoutes() {
   let allRoutes = window.globalRouteSheetData || [];
   if (!allRoutes || allRoutes.length === 0) return [];
-  if (!allRoutes[0]?._parsed) {
+  
+  if (!allRoutes[0]?._parsed && typeof precomputeRouteData === 'function') {
     allRoutes = precomputeRouteData(allRoutes);
     window.globalRouteSheetData = allRoutes;
   }
@@ -1636,36 +1759,30 @@ function getExecFilteredRoutes() {
   });
 }
 
-// 💡 ปรับปรุง: เมื่อคลิกการ์ดภาค ให้เรียกไฮไลต์แผนที่ และเปิด-ปิด (Toggle) ได้อย่างถูกต้อง
+/**
+ * ควบคุมการเลือกการ์ดภาค (Toggle เปิด-ปิด พร้อมไฮไลต์แผนที่)
+ */
 window.selectExecZoneCard = function(zoneName, cardEl) {
   const isAlreadyActive = cardEl && cardEl.classList.contains('ring-orange-500');
 
-  // ถ้าคลิกภาคเดิมซ้ำ ให้ทำการยกเลิกการเลือก และปิดตาราง
+  // คลิกซ้ำ = ยกเลิกการเลือก ปิดตาราง
   if (isAlreadyActive) {
     closeExecZoneDetailTable();
     return;
   }
 
-  // อัปเดตสไตล์ของการ์ดด้านซ้าย
-  document.querySelectorAll('#exec-region-summary-list > div').forEach(card => {
-    card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
-    card.classList.add('border-slate-200/90', 'dark:border-slate-800');
-  });
+  updateActiveZoneCardUI(cardEl);
 
-  if (cardEl) {
-    cardEl.classList.remove('border-slate-200/90', 'dark:border-slate-800');
-    cardEl.classList.add('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
-  }
-
-  // 💡 จุดที่ 1: สั่งให้แผนที่ Executive Map ไฮไลต์ภาค และเปลี่ยนภาคอื่นเป็นสีเทาทันที
   if (typeof highlightRegionOnExecMap === 'function') {
     highlightRegionOnExecMap(zoneName);
   }
 
-  // อัปเดตข้อมูลตารางด้านล่าง (โดยไม่เลื่อนหน้าจอหนี)
   showExecZoneDetailsTable(zoneName);
 };
 
+/**
+ * แสดงตารางรายละเอียดเส้นทางในภาคที่เลือก
+ */
 function showExecZoneDetailsTable(zoneName, customData = null) {
   const panel = document.getElementById('exec-zone-detail-panel');
   const titleEl = document.getElementById('exec-selected-zone-name');
@@ -1679,35 +1796,24 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
   const sourceData = customData || getExecFilteredRoutes();
   const cleanTargetZone = cleanAllSpaces(zoneName);
 
+  // 1. กรองเส้นทางในภาค
   const matchedRoutes = sourceData.filter(row => {
     const rowZone = row._parsed ? row._parsed.cleanZone : cleanAllSpaces(row.zone || row['Zone'] || '');
     return rowZone === cleanTargetZone || rowZone.includes(cleanTargetZone);
   });
 
-  // Sort ตาม % ว่างมากไปน้อย
+  // 2. อัปเดตการ์ดประเภทรถตามภาค
+  if (typeof renderExecTruckAvailList === 'function' && typeof buildTruckAvailMap === 'function') {
+    renderExecTruckAvailList(buildTruckAvailMap(matchedRoutes));
+  }
+
+  // 3. จัดเรียงข้อมูล (% ว่างมากไปน้อย -> เที่ยววิ่งมากไปน้อย)
   matchedRoutes.sort((a, b) => {
-    const getAvail = (row) => {
-      if (row._parsed && typeof row._parsed.availPct === 'number' && !isNaN(row._parsed.availPct)) {
-        return row._parsed.availPct;
-      }
-      const total = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
-      return Math.max(0, 100 - total);
-    };
-
-    const getTrips = (row) => {
-      if (row._parsed && typeof row._parsed.trips === 'number' && !isNaN(row._parsed.trips)) {
-        return row._parsed.trips;
-      }
-      return parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
-    };
-
-    const availA = getAvail(a);
-    const availB = getAvail(b);
+    const availA = getRouteAvailPct(a);
+    const availB = getRouteAvailPct(b);
     if (availB !== availA) return availB - availA;
 
-    const tripsA = getTrips(a);
-    const tripsB = getTrips(b);
-    return tripsB - tripsA;
+    return getRouteTrips(b) - getRouteTrips(a);
   });
 
   if (titleEl) titleEl.innerText = zoneName;
@@ -1720,6 +1826,7 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
       const p = row._parsed;
       const origin = row.origin || row['ต้นทาง'] || '-';
       const customer = row.customer_name || row['ลูกค้า'] || '-';
+      const customerType = row.customer_type || row['ประเภทลูกค้า'] || '';
       const shipToDesc = row.ship_to_desc || row['Description(Ship-To (Outbound))'] || row.province || row['จังหวัด'] || '-';
       const province = row.province || row['จังหวัด'] || '-';
       const product = row.product_category || row['ประเภทสินค้า'] || '-';
@@ -1734,7 +1841,9 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
         <tr class="hover:bg-slate-100/60 dark:hover:bg-zinc-900/60 transition-colors font-sans border-b border-slate-100 dark:border-slate-800/60 text-xs">
           <td class="p-2.5 font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">${escapeHtml(origin)}</td>
           <td class="p-2.5 max-w-[220px]">
-            <strong class="block text-slate-800 dark:text-slate-200 font-bold truncate" title="${escapeAttr(customer)}">${escapeHtml(customer)}</strong>
+            <strong class="block text-slate-800 dark:text-slate-200 font-bold truncate" title="${escapeAttr(customer)}">
+              ${escapeHtml(customer)} ${customerType ? `<span class="font-normal text-slate-400 text-[10px]">(${escapeHtml(customerType)})</span>` : ''}
+            </strong>
             <span class="text-[10px] text-slate-400 block leading-tight mt-0.5 truncate" title="${escapeAttr(shipToDesc)}">${escapeHtml(shipToDesc)}</span>
           </td>
           <td class="p-2.5 font-medium whitespace-nowrap text-slate-700 dark:text-slate-300">${escapeHtml(province)}</td>
@@ -1748,23 +1857,17 @@ function showExecZoneDetailsTable(zoneName, customData = null) {
     }).join('');
   }
 
-  // แสดง Panel ตารางขึ้นมา
   panel.classList.remove('hidden');
   panel.style.display = 'block';
-
-  // 💡 จุดที่ 2: ปิดคำสั่ง scrollIntoView เพื่อให้สายตาผู้ใช้โฟกัสอยู่ที่แผนที่ด้านบน ไม่โดนดึงลงมา
-  /*
-  setTimeout(() => {
-    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, 50);
-  */
 
   if (typeof lucide !== 'undefined') lucide.createIcons({ root: panel });
 }
 
 window.showExecZoneDetailsTable = showExecZoneDetailsTable;
 
-// 💡 จุดที่ 3: เมื่อปิดตาราง ให้คืนค่าสไตล์แผนที่ทั้งหมดกลับสู่สภาพเดิม
+/**
+ * ปิดตารางรายละเอียดโซน คืนค่าแผนที่และการ์ดสรุปกลับสู่ภาพรวม
+ */
 window.closeExecZoneDetailTable = function() {
   const panel = document.getElementById('exec-zone-detail-panel');
   if (panel) {
@@ -1772,24 +1875,100 @@ window.closeExecZoneDetailTable = function() {
     panel.style.display = 'none';
   }
 
-  document.querySelectorAll('#exec-region-summary-list > div').forEach(card => {
-    card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
-    card.classList.add('border-slate-200/90', 'dark:border-slate-800');
-  });
+  updateActiveZoneCardUI(null);
 
-  // รีเซ็ตแผนที่กลับเป็นภาพรวมทั้งประเทศ
   if (typeof resetExecMapHighlight === 'function') {
     resetExecMapHighlight();
   }
+
+  if (typeof renderExecTruckAvailList === 'function' && typeof buildTruckAvailMap === 'function') {
+    const allRoutes = typeof getExecFilteredRoutes === 'function' ? getExecFilteredRoutes() : [];
+    renderExecTruckAvailList(buildTruckAvailMap(allRoutes));
+  }
 };
 
+/**
+ * Drilldown จากแผนที่หรือจุดอื่น (ซิงค์ทั้งแผนที่, ตาราง, และการ์ดสรุป)
+ */
 window.drillDownExecZone = function(zoneName) {
-  // หากมีการเรียกผ่าน drillDown ให้สั่งไฮไลต์แผนที่ด้วยเช่นกัน
+  // ค้นหาการ์ดที่ตรงกับชื่อภาคแล้วใส่กรอบ Active
+  const targetCard = Array.from(document.querySelectorAll('#exec-region-summary-list > div')).find(el => {
+    return cleanAllSpaces(el.innerText).includes(cleanAllSpaces(zoneName));
+  });
+  updateActiveZoneCardUI(targetCard || null);
+
   if (typeof highlightRegionOnExecMap === 'function') {
     highlightRegionOnExecMap(zoneName);
   }
   showExecZoneDetailsTable(zoneName);
 };
+
+// ==============================================================================
+// DATA ACCESS LAYER (FETCHING)
+// ==============================================================================
+
+/**
+ * ดึงข้อมูลเส้นทางหลักแบบ Dynamic Batch (ดึงครบทุกแถว ไม่ถูกตัดที่ 15,000)
+ */
+async function fetchNewRouteSheet(limit = null) {
+  if (inFlightRouteFetchPromise) return inFlightRouteFetchPromise;
+
+  inFlightRouteFetchPromise = (async () => {
+    const db = getDbClient();
+    if (!db) return [];
+
+    try {
+      if (limit && typeof limit === 'number') {
+        const { data, error } = await db
+          .from(API_CONFIG.TABLES.ROUTES_VIEW)
+          .select(API_CONFIG.ROUTE_COLUMNS)
+          .order('id', { ascending: true })
+          .limit(limit);
+
+        if (error) throw error;
+        window.globalRouteSheetData = data || [];
+        return window.globalRouteSheetData;
+      }
+
+      const step = API_CONFIG.BATCH_SIZE || 5000;
+      let combinedData = [];
+      let from = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const to = from + step - 1;
+        const { data, error } = await db
+          .from(API_CONFIG.TABLES.ROUTES_VIEW)
+          .select(API_CONFIG.ROUTE_COLUMNS)
+          .order('id', { ascending: true })
+          .range(from, to);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          combinedData.push(...data);
+          if (data.length < step) {
+            hasMore = false;
+          } else {
+            from += step;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      window.globalRouteSheetData = combinedData;
+      return combinedData;
+    } catch (err) {
+      console.error('Error fetching routes from view_routes_with_coords:', err);
+      return window.globalRouteSheetData || [];
+    } finally {
+      inFlightRouteFetchPromise = null;
+    }
+  })();
+
+  return inFlightRouteFetchPromise;
+}
 
 // ==============================================================================
 // 8. SIMULATION & ORDER MAPPING ENGINE

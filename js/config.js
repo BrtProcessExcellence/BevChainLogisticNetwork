@@ -257,7 +257,7 @@ const LOGISTICS_DICT = {
   'อีสานล่าง': 'Lower Northeast',
   'ภาคอีสาน': 'Northeastern',
   'ตะวันออกเฉียงเหนือ': 'Northeast',
-  'กลาง': 'Central',
+  'กลางบน': 'Upper Central',
   'กลางล่าง': 'Lower Central',
   'ภาคกลาง': 'Central Region',
   'ใต้บน': 'Upper South',
