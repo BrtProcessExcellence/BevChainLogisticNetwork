@@ -7,7 +7,7 @@
 const API_CONFIG = {
   BATCH_SIZE: 50000, 
   TABLES: {
-    ROUTES_VIEW: 'view_routes_with_coords',
+    ROUTES_VIEW: 'get_view_routes_with_coords_secure', 
     EXEC_SUMMARY_VIEW: 'view_exec_province_summary',
     ORIGIN_LOCATIONS: 'brf_locations',
     PROVINCE_LOCATIONS: 'province_locations'
