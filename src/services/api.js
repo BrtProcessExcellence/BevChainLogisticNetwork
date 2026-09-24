@@ -96,18 +96,14 @@ export async function fetchNewRouteSheet(limit = null) {
             return parsed;
           }
         } catch (e) {
-          console.warn('[API] ⚠️ Cache parse error, refetching...', e);
           sessionStorage.removeItem(CACHE_KEY);
         }
       }
 
       console.log('[API] 📡 Fetching fresh data from Supabase...');
       if (limit && typeof limit === 'number') {
-        const { data, error } = await supabase
-          .rpc(API_CONFIG.TABLES.ROUTES_VIEW)
-          .select(API_CONFIG.ROUTE_COLUMNS)
-          .order('id', { ascending: true })
-          .limit(limit);
+        // 💡 เรียกใช้ผ่าน .rpc พร้อมส่งพารามิเตอร์ p_limit
+        const { data, error } = await supabase.rpc(API_CONFIG.TABLES.ROUTES_VIEW, { p_limit: limit, p_offset: 0 });
 
         if (error) throw error;
         window.globalRouteSheetData = data || [];
@@ -120,12 +116,8 @@ export async function fetchNewRouteSheet(limit = null) {
       let hasMore = true;
 
       while (hasMore) {
-        const to = from + step - 1;
-        const { data, error } = await supabase
-          .rpc(API_CONFIG.TABLES.ROUTES_VIEW)
-          .select(API_CONFIG.ROUTE_COLUMNS)
-          .order('id', { ascending: true })
-          .range(from, to);
+        // 💡 เรียกใช้ผ่าน .rpc พร้อมส่ง p_limit และ p_offset สำหรับแบ่ง Batch
+        const { data, error } = await supabase.rpc(API_CONFIG.TABLES.ROUTES_VIEW, { p_limit: step, p_offset: from });
 
         if (error) throw error;
 
@@ -146,7 +138,7 @@ export async function fetchNewRouteSheet(limit = null) {
       try {
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(combinedData));
       } catch (err) {
-        console.warn('[API] ⚠️ SessionStorage quota exceeded. Using memory only.');
+        console.warn('[API] ⚠️ SessionStorage quota exceeded.');
       }
 
       window.globalRouteSheetData = combinedData;
