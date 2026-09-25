@@ -41,7 +41,23 @@ import { parseNum, formatNum, cleanAllSpaces, escapeHtml, escapeAttr } from './u
 // ==============================================================================
 // 1. GLOBAL STATE & CONSTANTS
 // ==============================================================================
-const WORKING_DAYS_PER_WEEK = 6;
+const ORIGIN_WORKING_DAYS = {
+  BAB: 5,
+  BBTDC: 6,
+  CMB: 5,
+  HY: 5,
+  KKB: 5,
+  KKRDC: 5,
+  LLKDC: 6,
+  LPRDC: 5,
+  MSB: 5,
+  PTB: 5,
+  SBC: 5,
+  SRB: 5,
+  WN1: 6,
+  WNDC: 6
+};
+
 const PAGE_SIZE = 50;
 
 window.state = {
@@ -93,6 +109,11 @@ window.changePage = changePage;
 window.onTableRowClick = onTableRowClick;
 window.toggleRouteDetail = toggleRouteDetail;
 window.highlightSubconRoute = highlightSubconRoute;
+
+// 💡 สร้างสะพานเชื่อมให้ HTML ปุ่ม Zoom เข้าถึง Object แผนที่ของ Leaflet ได้
+Object.defineProperty(window, 'dashMap', { get: () => dashMap });
+Object.defineProperty(window, 'execMap', { get: () => execMap });
+Object.defineProperty(window, 'simMap', { get: () => simMap });
 
 // ==============================================================================
 // 3. UI HELPERS & FORMATTING
@@ -166,10 +187,14 @@ function precomputeRouteData(routes) {
     let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
     if (!shipTo || shipTo === '-') shipTo = destProv;
 
+    const workingDays = ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6;
     const trips = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    const tripsDay = trips / workingDays;
+
     const totalPct = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
     const availPct = Math.max(0, 100 - totalPct);
     const availTrips = trips * (availPct / 100);
+    const availTripsDay = availTrips / workingDays;
 
     const cleanOrigin = cleanAllSpaces(origin);
     const cleanCustomer = cleanAllSpaces(row.customer_name || row['ลูกค้า'] || '-');
@@ -198,6 +223,9 @@ function precomputeRouteData(routes) {
     return {
       ...row,
       _parsed: {
+        workingDays,
+        tripsDay,
+        availTripsDay,
         trips,
         totalPct,
         availPct,
@@ -260,8 +288,8 @@ window.initAppAfterLogin = async function () {
     await updateExecutiveDashboard(window.globalRouteSheetData);
 
     setTimeout(() => {
-      if (execMap) execMap.invalidateSize();
-      if (dashMap) dashMap.invalidateSize();
+      if (typeof execMap !== 'undefined' && execMap) execMap.invalidateSize();
+      if (typeof dashMap !== 'undefined' && dashMap) dashMap.invalidateSize();
       hideGlobalLoader();
     }, 300);
   } catch (err) {
@@ -367,8 +395,11 @@ function calculateExecAnalytics(routeData) {
     carrierUnavailableCount: 0,
     carrierAvailableCount: 0,
     totalTripsSum: 0,
+    totalTripsDaySum: 0,
     unavailTripsSum: 0,
+    unavailTripsDaySum: 0,
     availTripsSum: 0,
+    availTripsDaySum: 0,
     distinctRouteMap: {},
     zoneSummaryMap: {},
     truckAvailMap: {},
@@ -387,46 +418,82 @@ function calculateExecAnalytics(routeData) {
     const rawFwdAgent = String(row.fwd_agent_desc || row['Description(FwdAgent)'] || row['ผู้รับเหมา'] || '').trim();
 
     const trips = p ? p.trips : parseNum(row.avg_trip_week, 0);
+    const tripsDay = p ? p.tripsDay : trips / (ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6);
+
     const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total, 0));
     const rowActualAvailTrips = p ? p.availTrips : trips * (availPct / 100);
+    const rowActualAvailTripsDay = p
+      ? p.availTripsDay
+      : rowActualAvailTrips / (ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6);
 
     result.totalTripsSum += trips;
+    result.totalTripsDaySum += tripsDay;
+
     if (availPct === 0) {
       result.carrierUnavailableCount++;
       result.unavailTripsSum += trips;
+      result.unavailTripsDaySum += tripsDay;
     } else {
       result.carrierAvailableCount++;
       result.availTripsSum += rowActualAvailTrips;
+      result.availTripsDaySum += rowActualAvailTripsDay;
     }
 
     const distinctKey = p ? p.distinctKey : getDistinctKey(row);
     if (!result.distinctRouteMap[distinctKey]) {
-      result.distinctRouteMap[distinctKey] = { hasAvailable: false, totalTrips: 0, availTrips: 0 };
+      result.distinctRouteMap[distinctKey] = {
+        hasAvailable: false,
+        totalTrips: 0,
+        totalTripsDay: 0,
+        availTrips: 0,
+        availTripsDay: 0
+      };
     }
     result.distinctRouteMap[distinctKey].totalTrips += trips;
+    result.distinctRouteMap[distinctKey].totalTripsDay += tripsDay;
     result.distinctRouteMap[distinctKey].availTrips += rowActualAvailTrips;
+    result.distinctRouteMap[distinctKey].availTripsDay += rowActualAvailTripsDay;
     if (availPct > 0) result.distinctRouteMap[distinctKey].hasAvailable = true;
 
     if (zone && zone !== '-') {
       if (!result.zoneSummaryMap[zone])
-        result.zoneSummaryMap[zone] = { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 };
+        result.zoneSummaryMap[zone] = {
+          totalRoutes: 0,
+          availRoutes: 0,
+          totalTrips: 0,
+          totalTripsDay: 0,
+          availTrips: 0,
+          availTripsDay: 0
+        };
       result.zoneSummaryMap[zone].totalRoutes++;
       result.zoneSummaryMap[zone].totalTrips += trips;
+      result.zoneSummaryMap[zone].totalTripsDay += tripsDay;
       if (availPct > 0) {
         result.zoneSummaryMap[zone].availRoutes++;
         result.zoneSummaryMap[zone].availTrips += rowActualAvailTrips;
+        result.zoneSummaryMap[zone].availTripsDay += rowActualAvailTripsDay;
       }
     }
 
     if (truck && truck !== '-') {
       if (!result.truckAvailMap[truck])
-        result.truckAvailMap[truck] = { totalRoutes: 0, availRoutes: 0, sumAvailPct: 0, totalTrips: 0, availTrips: 0 };
+        result.truckAvailMap[truck] = {
+          totalRoutes: 0,
+          availRoutes: 0,
+          sumAvailPct: 0,
+          totalTrips: 0,
+          totalTripsDay: 0,
+          availTrips: 0,
+          availTripsDay: 0
+        };
       result.truckAvailMap[truck].totalRoutes++;
       result.truckAvailMap[truck].totalTrips += trips;
+      result.truckAvailMap[truck].totalTripsDay += tripsDay;
       result.truckAvailMap[truck].sumAvailPct += availPct;
       if (availPct > 0) {
         result.truckAvailMap[truck].availRoutes++;
         result.truckAvailMap[truck].availTrips += rowActualAvailTrips;
+        result.truckAvailMap[truck].availTripsDay += rowActualAvailTripsDay;
       }
     }
 
@@ -435,11 +502,20 @@ function calculateExecAnalytics(routeData) {
         const clean = agent.trim();
         if (clean && clean !== '-' && clean !== 'ไม่ระบุ') {
           if (!result.carrierAvailMap[clean])
-            result.carrierAvailMap[clean] = { sumAvail: 0, count: 0, trips: 0, availTrips: 0 };
+            result.carrierAvailMap[clean] = {
+              sumAvail: 0,
+              count: 0,
+              trips: 0,
+              tripsDay: 0,
+              availTrips: 0,
+              availTripsDay: 0
+            };
           result.carrierAvailMap[clean].sumAvail += availPct;
           result.carrierAvailMap[clean].count += 1;
           result.carrierAvailMap[clean].trips += trips;
+          result.carrierAvailMap[clean].tripsDay += tripsDay;
           result.carrierAvailMap[clean].availTrips += rowActualAvailTrips;
+          result.carrierAvailMap[clean].availTripsDay += rowActualAvailTripsDay;
         }
       });
     }
@@ -472,8 +548,14 @@ function renderExecTopKPIs(data) {
     distinctTotalCount > 0 ? ((distinctAvailableCount / distinctTotalCount) * 100).toFixed(1) : '0.0';
 
   const distinctTotalTripsWk = Object.values(data.distinctRouteMap).reduce((sum, r) => sum + r.totalTrips, 0);
+  const distinctTotalTripsDay = Object.values(data.distinctRouteMap).reduce((sum, r) => sum + r.totalTripsDay, 0);
+
   const distinctAvailTripsWk = Object.values(data.distinctRouteMap).reduce(
     (sum, r) => sum + (r.hasAvailable ? r.availTrips : 0),
+    0
+  );
+  const distinctAvailTripsDay = Object.values(data.distinctRouteMap).reduce(
+    (sum, r) => sum + (r.hasAvailable ? r.availTripsDay : 0),
     0
   );
 
@@ -496,11 +578,11 @@ function renderExecTopKPIs(data) {
   setText('kpi-distinct-avail-pct', `(${distinctAvailPct}%)`);
   setHtml(
     'kpi-distinct-total-trips',
-    `<div><strong class="text-slate-700 dark:text-slate-200">${Math.round(distinctTotalTripsWk).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-slate-400 font-normal">(~${(distinctTotalTripsWk / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day • 6 days)</div>`
+    `<div><strong class="text-slate-700 dark:text-slate-200">${Math.round(distinctTotalTripsWk).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-slate-400 font-normal">(~${distinctTotalTripsDay.toFixed(1)} trips/day)</div>`
   );
   setHtml(
     'kpi-distinct-avail-trips',
-    `<div><strong class="text-emerald-700 dark:text-emerald-300">${Math.round(distinctAvailTripsWk).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-emerald-500 font-normal">(~${(distinctAvailTripsWk / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day • 6 days)</div>`
+    `<div><strong class="text-emerald-700 dark:text-emerald-300">${Math.round(distinctAvailTripsWk).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-emerald-500 font-normal">(~${distinctAvailTripsDay.toFixed(1)} trips/day)</div>`
   );
 
   setText('kpi-carrier-total', data.carrierTotalCount.toLocaleString());
@@ -510,15 +592,15 @@ function renderExecTopKPIs(data) {
   setText('kpi-carrier-avail-pct', `(${carrierAvailPct}%)`);
   setHtml(
     'kpi-carrier-total-trips',
-    `<div><strong class="text-slate-700 dark:text-slate-200">${Math.round(data.totalTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-slate-400 font-normal">(~${(data.totalTripsSum / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</div>`
+    `<div><strong class="text-slate-700 dark:text-slate-200">${Math.round(data.totalTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-slate-400 font-normal">(~${data.totalTripsDaySum.toFixed(1)} trips/day)</div>`
   );
   setHtml(
     'kpi-carrier-unavail-trips',
-    `<div><strong class="text-rose-700 dark:text-rose-300">${Math.round(data.unavailTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-rose-500 font-normal">(~${(data.unavailTripsSum / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</div>`
+    `<div><strong class="text-rose-700 dark:text-rose-300">${Math.round(data.unavailTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-rose-500 font-normal">(~${data.unavailTripsDaySum.toFixed(1)} trips/day)</div>`
   );
   setHtml(
     'kpi-carrier-avail-trips',
-    `<div><strong class="text-emerald-700 dark:text-emerald-300">${Math.round(data.availTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-emerald-500 font-normal">(~${(data.availTripsSum / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</div>`
+    `<div><strong class="text-emerald-700 dark:text-emerald-300">${Math.round(data.availTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-emerald-500 font-normal">(~${data.availTripsDaySum.toFixed(1)} trips/day)</div>`
   );
 }
 
@@ -533,6 +615,7 @@ function renderExecTruckAvailList(truckAvailMap) {
       availRoutes: stat.availRoutes,
       totalTrips: stat.totalTrips,
       availTrips: stat.availTrips,
+      availTripsDay: stat.availTripsDay,
       availRatio: stat.totalRoutes > 0 ? (stat.availRoutes / stat.totalRoutes) * 100 : 0
     }))
     .sort((a, b) => b.availRoutes - a.availRoutes);
@@ -574,6 +657,7 @@ function renderExecTruckAvailList(truckAvailMap) {
           <div class="bg-white/80 dark:bg-zinc-900/80 p-2 rounded-xl border border-slate-100 dark:border-slate-800 text-right">
             <span class="text-slate-400 block text-[9px] font-medium">Available Volume</span>
             <strong class="text-slate-800 dark:text-slate-200 text-xs font-black">${Math.round(item.availTrips).toLocaleString()} <span class="text-[9px] text-slate-400 font-normal">trips/wk</span></strong>
+            <div class="text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold">(~${item.availTripsDay.toFixed(1)} trips/day)</div>
           </div>
         </div>
       </div>
@@ -605,7 +689,7 @@ function renderExecCarrierCapacity(carrierAvailMap, allRoutesList) {
           </div>
           <div class="w-full bg-slate-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden"><div class="h-full rounded-full transition-all duration-500" style="width: ${Math.min(item.avgAvail, 100)}%; background-color: ${color.hex};"></div></div>
           <div class="flex items-center justify-between text-[10px] pt-1 border-t border-slate-200/50 dark:border-slate-800/80 text-slate-400">
-            <span class="font-medium">Available Volume</span><strong class="text-slate-700 dark:text-slate-300 font-bold">~${Math.round(item.availTrips).toLocaleString()} /wk</strong>
+            <span class="font-medium">Available Volume</span><strong class="text-slate-700 dark:text-slate-300 font-bold">~${Math.round(item.availTrips).toLocaleString()} /wk <span class="text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold">(~${item.availTripsDay.toFixed(1)} trips/day)</span></strong>
           </div>
         </div>
       `;
@@ -620,6 +704,7 @@ function renderExecCarrierCapacity(carrierAvailMap, allRoutesList) {
       count: stat.count,
       trips: stat.trips,
       availTrips: stat.availTrips,
+      availTripsDay: stat.availTripsDay,
       avgAvail: Math.round(stat.sumAvail / stat.count)
     }))
     .sort((a, b) => (b.avgAvail !== a.avgAvail ? b.avgAvail - a.avgAvail : b.count - a.count));
@@ -645,18 +730,35 @@ function updateExecNewOrderMappingSection(sourceData) {
   const zoneStats = {};
   sourceData.forEach((row) => {
     const p = row._parsed;
+    const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
     const zoneName = String(row.zone || row['Zone'] || '').trim();
     if (zoneName && zoneName !== 'undefined' && zoneName !== '-' && zoneName !== 'null') {
+      const workingDays = p ? p.workingDays : ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6;
       const trips = p ? p.trips : parseNum(row.avg_trip_week, 0);
+      const tripsDay = p ? p.tripsDay : trips / workingDays;
+
       const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total, 0));
       const availTrips = p ? p.availTrips : trips * (availPct / 100);
+      const availTripsDay = p ? p.availTripsDay : availTrips / workingDays;
 
-      if (!zoneStats[zoneName]) zoneStats[zoneName] = { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 };
+      if (!zoneStats[zoneName])
+        zoneStats[zoneName] = {
+          totalRoutes: 0,
+          availRoutes: 0,
+          totalTrips: 0,
+          totalTripsDay: 0,
+          availTrips: 0,
+          availTripsDay: 0
+        };
+
       zoneStats[zoneName].totalRoutes += 1;
       zoneStats[zoneName].totalTrips += trips;
+      zoneStats[zoneName].totalTripsDay += tripsDay;
+
       if (availPct > 0) {
         zoneStats[zoneName].availRoutes += 1;
         zoneStats[zoneName].availTrips += availTrips;
+        zoneStats[zoneName].availTripsDay += availTripsDay;
       }
     }
   });
@@ -667,7 +769,9 @@ function updateExecNewOrderMappingSection(sourceData) {
       totalRoutes: stat.totalRoutes,
       availRoutes: stat.availRoutes,
       totalTrips: stat.totalTrips,
+      totalTripsDay: stat.totalTripsDay,
       availTrips: stat.availTrips,
+      availTripsDay: stat.availTripsDay,
       zoneAvailPct: stat.totalRoutes > 0 ? (stat.availRoutes / stat.totalRoutes) * 100 : 0
     }))
     .sort((a, b) =>
@@ -682,14 +786,20 @@ function updateExecNewOrderMappingSection(sourceData) {
   container.innerHTML = sortedZones
     .map(
       (item) => `
-    <div onclick="window.selectExecZoneCard('${escapeAttr(item.zoneName)}', this)" class="p-3.5 rounded-2xl bg-white dark:bg-zinc-950 border border-slate-200/90 dark:border-slate-800 hover:border-orange-500 cursor-pointer transition-all flex items-center justify-between font-sans shadow-sm hover:scale-[1.01]">
+    <div onclick="window.selectExecZoneCard('${escapeAttr(item.zoneName)}', this)" class="p-4 rounded-2xl bg-white dark:bg-zinc-950 border border-slate-200/90 dark:border-slate-800 hover:border-orange-500 cursor-pointer transition-all flex items-center justify-between font-sans shadow-sm hover:shadow-md">
       <div>
-        <h5 class="text-xs font-extrabold text-slate-800 dark:text-white">${escapeHtml(item.zoneName)}</h5>
-        <p class="text-[10px] text-slate-400 mt-0.5">${item.totalRoutes.toLocaleString()} routes (${Math.round(item.totalTrips).toLocaleString()} trips/wk)</p>
+        <h5 class="text-sm font-extrabold text-slate-800 dark:text-white mb-1">${escapeHtml(item.zoneName)}</h5>
+        <p class="text-[11px] text-slate-400 font-medium">
+          ${item.totalRoutes.toLocaleString()} routes (${Math.round(item.totalTrips).toLocaleString()} trips/wk • ~${item.totalTripsDay.toFixed(1)} trips/day)
+        </p>
       </div>
       <div class="text-right">
-        <div class="text-xs font-black text-emerald-600 dark:text-emerald-400">${item.availRoutes.toLocaleString()} routes <span class="text-[10px]">(${item.zoneAvailPct.toFixed(2)}%)</span></div>
-        <p class="text-[10px] text-slate-400 mt-0.5">~${Math.round(item.availTrips).toLocaleString()} trips/wk</p>
+        <div class="text-sm font-black text-emerald-600 dark:text-emerald-400 mb-1">
+          ${item.availRoutes.toLocaleString()} routes <span class="text-xs">(${item.zoneAvailPct.toFixed(2)}%)</span>
+        </div>
+        <p class="text-[11px] text-slate-400 font-medium">
+          ~${Math.round(item.availTrips).toLocaleString()} trips/wk (~${item.availTripsDay.toFixed(1)} trips/day)
+        </p>
       </div>
     </div>
   `
@@ -1214,34 +1324,140 @@ function renderTable(filteredData = []) {
   paginatedKeys.forEach((key) => {
     const grp = groupedRoutes[key];
     const color = getAvailColorScale(grp.availablePct);
+    const vendorCount = grp.vendors.length;
+
+    const totalOffPeak = grp.vendors.reduce((sum, v) => sum + parseNum(v.avg_off_peak || v['Avg Off Peak'], 0), 0);
+    const totalPeak = grp.vendors.reduce((sum, v) => sum + parseNum(v.avg_peak || v['Avg Peak'], 0), 0);
+
+    const avgBoonrawd =
+      vendorCount > 0
+        ? Math.round(
+            grp.vendors.reduce((sum, v) => sum + parseNum(v.pct_boonrawd || v['%รับงานต่อสำหรับงานบุญรอด'], 0), 0) /
+              vendorCount
+          )
+        : 0;
+    const avgOwn =
+      vendorCount > 0
+        ? Math.round(
+            grp.vendors.reduce((sum, v) => sum + parseNum(v.pct_own || v['%รับงานต่องานของผู้รับเหมาเอง'], 0), 0) /
+              vendorCount
+          )
+        : 0;
+    const avgOutside =
+      vendorCount > 0
+        ? Math.round(
+            grp.vendors.reduce(
+              (sum, v) => sum + parseNum(v.pct_brf_outside || v['%รับงานต่อ สำหรับงานนอกของ BRF'], 0),
+              0
+            ) / vendorCount
+          )
+        : 0;
 
     html += `
       <tr id="row-${grp.id}" data-map-key="${escapeAttr(grp.mapRouteKey)}" class="text-xs border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer font-sans" onclick="window.onTableRowClick('${escapeAttr(grp.mapRouteKey)}', '${grp.id}')">
         <td class="p-3 text-center"><i data-lucide="chevron-right" id="icon-${grp.id}" class="w-4 h-4 text-slate-400 transition-transform duration-200 inline-block"></i></td>
-        <td class="p-3 whitespace-nowrap"><div class="font-bold text-slate-800 dark:text-white">${escapeHtml(grp.origin)} &rarr; ${escapeHtml(grp.shipToDesc)}</div><div class="text-[10px] text-slate-400">Zone: ${escapeHtml(grp.zone)}</div></td>
-        <td class="p-3 max-w-[200px]"><div class="font-bold text-slate-800 dark:text-slate-200 truncate"><span>${escapeHtml(grp.customerName)}</span> <span class="text-xs font-normal text-slate-500">(${escapeHtml(grp.customerType)})</span></div><div class="text-[10px] text-slate-400 truncate mt-0.5">${escapeHtml(grp.productCat)}</div></td>
+        <td class="p-3 whitespace-nowrap">
+          <div class="font-bold text-slate-800 dark:text-white">${escapeHtml(grp.origin)} &rarr; ${escapeHtml(grp.shipToDesc)}</div>
+          <div class="text-[10px] text-slate-400">Zone: ${escapeHtml(grp.zone)}</div>
+        </td>
+        <td class="p-3 max-w-[200px]">
+          <div class="font-bold text-slate-800 dark:text-slate-200 truncate"><span>${escapeHtml(grp.customerName)}</span> <span class="text-xs font-normal text-slate-500">(${escapeHtml(grp.customerType)})</span></div>
+          <div class="text-[10px] text-slate-400 truncate mt-0.5">${escapeHtml(grp.productCat)}</div>
+        </td>
         <td class="p-3 whitespace-nowrap"><div class="font-semibold text-blue-600 dark:text-blue-400">${escapeHtml(grp.truckType)}</div></td>
-        <td class="p-3"><span class="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-300 font-extrabold text-[10px]">${grp.uniqueSubcons.size}</span></td>
-        <td class="p-3 whitespace-nowrap"><div class="font-Sarabun font-bold text-slate-800 dark:text-slate-200">${formatNum(grp.totalTrips)} Trip/WK</div></td>
+        <td class="p-3"><span class="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-300 font-extrabold text-[10px]">${vendorCount}</span></td>
+        <td class="p-3 whitespace-nowrap">
+          <div class="font-Sarabun font-bold text-slate-800 dark:text-slate-200">${formatNum(grp.totalTrips)} Trip/WK</div>
+          <div class="text-[10px] font-Sarabun text-slate-500 dark:text-slate-400 mt-0.5">
+            Off: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(totalOffPeak)}</span> | On: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(totalPeak)}</span>
+          </div>
+        </td>
         <td class="p-3 min-w-[170px]">
-          <div class="flex items-center justify-between text-[10px] font-Sarabun font-bold mb-1"><span class="text-slate-500">Available:</span><span class="${color.text}">${grp.availablePct}% <span class="text-slate-400 font-normal">(~${formatNum(grp.totalAvailTrips, 1)} trips/wk)</span></span></div>
+          <div class="flex items-center justify-between text-[10px] font-Sarabun font-bold mb-1">
+            <span class="text-slate-500">Available:</span>
+            <span class="${color.text}">${grp.availablePct}% <span class="text-slate-400 font-normal">(~${formatNum(grp.totalAvailTrips, 1)} trips/wk)</span></span>
+          </div>
+          <div class="w-full bg-slate-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden flex shadow-inner mb-1">
+            <div class="bg-blue-500 h-full transition-all" style="width: ${avgBoonrawd}%"></div>
+            <div class="bg-emerald-500 h-full transition-all" style="width: ${avgOwn}%"></div>
+            <div class="bg-amber-500 h-full transition-all" style="width: ${avgOutside}%"></div>
+          </div>
+          <div class="flex justify-between text-[9px] font-Sarabun leading-tight">
+            <span class="text-blue-500 font-semibold">BRT ${avgBoonrawd}%</span>
+            <span class="text-emerald-500 font-semibold">Own ${avgOwn}%</span>
+            <span class="text-amber-500 font-semibold">Ext ${avgOutside}%</span>
+          </div>
         </td>
       </tr>
       <tr id="detail-${grp.id}" class="border-b border-slate-200 dark:border-slate-800 font-sans">
         <td colspan="7" class="p-0">
           <div class="accordion-detail" id="content-${grp.id}">
             <div class="p-4 pl-12 border-l-4 border-orange-500 m-3 rounded-2xl bg-slate-50/80 dark:bg-zinc-950/80 shadow-inner">
-              <h4 class="text-xs font-bold mb-2 text-slate-700 dark:text-slate-300">Carriers Details (${grp.vendors.length})</h4>
+              <h4 class="text-xs font-bold mb-2 text-slate-700 dark:text-slate-300">Carriers Details (${vendorCount})</h4>
               <table class="w-full text-xs text-left border-collapse">
                 <thead class="text-slate-400 dark:text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-200 dark:border-slate-800">
-                  <tr><th class="py-2 px-3 font-bold w-1/4">Carrier Name</th><th class="py-2 px-2 font-bold text-center">Avg Trip</th><th class="py-2 px-3 font-bold text-center">Available Capacity</th><th class="py-2 px-3 font-bold text-center">Available Trips/Wk</th></tr>
+                  <tr>
+                    <th class="py-2 px-3 font-bold w-1/4">Carrier Name</th>
+                    <th class="py-2 px-2 font-bold text-center w-20">Avg Trip</th>
+                    <th class="py-2 px-2 font-bold text-center w-20">Off Peak</th>
+                    <th class="py-2 px-2 font-bold text-center w-20">Peak</th>
+                    <th class="py-2 px-3 font-bold text-center w-28">Available Capacity</th>
+                    <th class="py-2 px-3 font-bold text-center w-28">Available Trips/Wk</th>
+                    <th class="py-2 px-3 font-bold text-center">Available Proportion</th>
+                  </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-200/60 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
                   ${grp.vendors
                     .map((v) => {
-                      const vendorBadgeColor =
-                        v._parsed.availPct === 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600';
-                      return `<tr class="hover:bg-slate-100/60 transition-colors"><td class="py-3 px-3 font-bold text-slate-800 dark:text-slate-200">${escapeHtml(v.fwd_agent_desc || '-')}</td><td class="py-3 px-2 text-center font-Sarabun font-bold">${formatNum(v._parsed.trips)}</td><td class="py-3 px-3 text-center"><span class="px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center whitespace-nowrap ${vendorBadgeColor}">${Math.round(v._parsed.availPct)}%</span></td><td class="py-3 px-3 text-center font-Sarabun font-bold text-slate-700 dark:text-slate-300">${formatNum(v._parsed.availTrips, 1)}</td></tr>`;
+                      const vp = v._parsed;
+                      const fwdAgentName = v.fwd_agent_desc || '-';
+                      const vOutsideRoute = String(v.brf_outside_route || '').trim();
+                      const vTrip = vp ? vp.trips : parseNum(v.avg_trip_week, 0);
+                      const vOffPeak = parseNum(v.avg_off_peak || v['Avg Off Peak'], 0);
+                      const vPeak = parseNum(v.avg_peak || v['Avg Peak'], 0);
+                      const vendorAvailablePct = vp ? vp.availPct : Math.max(0, 100 - parseNum(v.pct_total, 0));
+                      const vendorAvailTrips = vp ? vp.availTrips : vTrip * (vendorAvailablePct / 100);
+                      const isFull = vendorAvailablePct === 0;
+                      const bVal = parseNum(v.pct_boonrawd || v['%รับงานต่อสำหรับงานบุญรอด'], 0);
+                      const oVal = parseNum(v.pct_own || v['%รับงานต่องานของผู้รับเหมาเอง'], 0);
+                      const extVal = parseNum(v.pct_brf_outside || v['%รับงานต่อ สำหรับงานนอกของ BRF'], 0);
+                      const vendorBadgeColor = isFull
+                        ? 'bg-rose-50 text-rose-600 border border-rose-200'
+                        : 'bg-emerald-50 text-emerald-600 border border-emerald-200';
+
+                      return `
+                      <tr class="hover:bg-slate-100/60 dark:hover:bg-zinc-900/60 transition-colors">
+                        <td class="py-3 px-3 font-bold text-slate-800 dark:text-slate-200">
+                          ${escapeHtml(fwdAgentName)}${vOutsideRoute && vOutsideRoute !== '-' ? `<span class="block text-[10px] text-slate-400 font-normal mt-0.5">เส้นทางนอก BRF: ${escapeHtml(vOutsideRoute)}</span>` : ''}
+                        </td>
+                        <td class="py-3 px-2 text-center font-Sarabun font-bold">${formatNum(vTrip)}</td>
+                        <td class="py-3 px-2 text-center font-Sarabun text-slate-500">${formatNum(vOffPeak)}</td>
+                        <td class="py-3 px-2 text-center font-Sarabun text-slate-500">${formatNum(vPeak)}</td>
+                        <td class="py-3 px-3 text-center">
+                          <span class="px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center whitespace-nowrap ${vendorBadgeColor}">
+                            <span class="w-1.5 h-1.5 rounded-full shrink-0 mr-1.5 ${isFull ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}"></span>
+                            ${Math.round(vendorAvailablePct)}%
+                          </span>
+                        </td>
+                        <td class="py-3 px-3 text-center font-Sarabun font-bold text-slate-700 dark:text-slate-300">
+                          ${formatNum(vendorAvailTrips, 1)}
+                        </td>
+                        <td class="py-3 px-4">
+                          <div class="max-w-xs mx-auto space-y-1">
+                            <div class="w-full bg-slate-200 dark:bg-zinc-800 h-2 rounded-full overflow-hidden flex shadow-inner">
+                              <div class="bg-blue-500 h-full transition-all" style="width: ${bVal}%"></div>
+                              <div class="bg-emerald-500 h-full transition-all" style="width: ${oVal}%"></div>
+                              <div class="bg-amber-500 h-full transition-all" style="width: ${extVal}%"></div>
+                            </div>
+                            <div class="flex justify-between text-[10px] font-Sarabun text-slate-500 dark:text-slate-400 px-0.5">
+                              <span class="text-blue-500 font-semibold">BRT ${bVal}%</span>
+                              <span class="text-emerald-500 font-semibold">Own ${oVal}%</span>
+                              <span class="text-amber-500 font-semibold">Ext ${extVal}%</span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    `;
                     })
                     .join('')}
                 </tbody>
@@ -1482,7 +1698,6 @@ function highlightSubconRoute(subconId, cardEl) {
     card.classList.remove('ring-2', 'ring-orange-500', 'shadow-lg');
   });
   if (cardEl) cardEl.classList.add('ring-2', 'ring-orange-500', 'shadow-lg');
-  // highlightMapRouteById(subconId); // Assume implemented in map.js
 }
 
 function backToSimInput() {
@@ -1573,6 +1788,17 @@ function setupEventListeners() {
         'mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-[#f97316] text-white shadow-sm';
       applyDynamicFilters();
     });
+  });
+
+  // 💡 คืนค่าปุ่มสลับภาษา TH/EN
+  document.getElementById('toggle-lang')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const currentLang = localStorage.getItem('app_lang') || 'th';
+    const nextLang = currentLang === 'th' ? 'en' : 'th';
+    if (typeof applySmartTranslation === 'function') {
+      applySmartTranslation(nextLang);
+    }
+    e.target.innerText = nextLang.toUpperCase();
   });
 }
 
