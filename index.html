@@ -14,6 +14,9 @@
       };
     </script>
 
+    <!-- Supabase JS (เผื่อกรณีที่ยังต้องใช้ดึงตรงๆ แต่ปกติ Vite จะเรียกผ่าน NPM) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
     <!-- Leaflet CSS & JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -33,20 +36,25 @@
   <body
     class="bg-slate-50 dark:bg-zinc-950 text-slate-800 dark:text-white transition-colors duration-500 overflow-hidden font-sans selection:bg-orange-500/30"
   >
-    <!-- GLOBAL SPINNER LOADER -->
+    <!-- ==============================================================================
+         GLOBAL SPINNER LOADER (แสดงทันทีเมื่อเปิดหน้า / F5 / โหลดข้อมูล)
+    ============================================================================== -->
     <div
       id="app-global-loader"
       class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white/80 dark:bg-zinc-950/85 backdrop-blur-sm transition-opacity duration-500 ease-out"
     >
       <div class="relative flex items-center justify-center">
+        <!-- วงแหวนหลัก (หมุนตามเข็ม สีส้ม) -->
         <div
           class="w-14 h-14 rounded-full border-4 border-slate-200 dark:border-zinc-800 border-t-[#ff5e00] animate-spin"
         ></div>
+        <!-- วงแหวนด้านใน (หมุนทวนเข็ม) -->
         <div
           class="absolute w-8 h-8 rounded-full border-2 border-slate-100 dark:border-zinc-800 border-b-[#f97316] animate-spin"
           style="animation-direction: reverse; animation-duration: 0.85s"
         ></div>
       </div>
+      <!-- ข้อความสถานะ -->
       <p
         id="app-loader-text"
         class="mt-4 text-xs font-bold tracking-wider text-slate-600 dark:text-slate-300 font-sans animate-pulse"
@@ -86,7 +94,9 @@
           <button
             id="btn-login-ms"
             class="w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-white border-2 border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 dark:bg-zinc-800 text-slate-700 dark:text-slate-200 rounded-xl font-bold text-sm shadow-sm transition-all hover:shadow-md group cursor-pointer"
-          ></button>
+          >
+            <!-- เนื้อหาปุ่มจะถูกเรนเดอร์ผ่าน JavaScript อัตโนมัติ -->
+          </button>
         </div>
         <p class="mt-8 text-[10px] text-slate-400 font-medium">© 2026 BevChain Logistics. Secure Enterprise Login.</p>
       </div>
@@ -133,12 +143,15 @@
         <div class="p-4 border-t border-slate-200 dark:border-slate-800 font-sans">
           <div class="flex items-center justify-between gap-2" id="sidebar-user">
             <div class="flex items-center gap-3 overflow-hidden user-info-wrapper">
+              <!-- 💡 1. รูป/ตัวย่อชื่อ (Initials) -->
               <div
                 id="user-avatar-initials"
                 class="w-8 h-8 rounded-full bg-orange-100 dark:bg-orange-950/60 flex items-center justify-center shrink-0 border-2 border-orange-500 text-orange-600 dark:text-orange-400 font-extrabold text-xs uppercase shadow-sm"
               >
                 --
               </div>
+
+              <!-- 💡 2. ชื่อผู้ใช้ และ แผนก/อีเมล -->
               <div class="overflow-hidden user-details flex flex-col">
                 <p
                   id="user-display-name"
@@ -152,6 +165,8 @@
                 </p>
               </div>
             </div>
+
+            <!-- 💡 3. ปุ่ม Logout -->
             <button
               id="btn-logout"
               type="button"
@@ -185,6 +200,14 @@
             >
               <i data-lucide="refresh-cw" class="w-4 h-4"></i>
             </button>
+            <!-- <button class="relative p-2 rounded-full border bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-slate-300 hover:text-[#ff5e00] transition-colors">
+              <div class="absolute top-0 right-0 w-2 h-2 bg-[#ff5e00] rounded-full border border-white dark:border-zinc-950"></div>
+              <i data-lucide="activity" class="w-4 h-4"></i>
+            </button>
+            <button class="p-2 rounded-full border bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-slate-300 hover:text-[#ff5e00] transition-colors">
+              <i data-lucide="settings" class="w-4 h-4"></i>
+            </button>
+            -->
             <button
               id="toggle-lang"
               class="p-2 rounded-full border font-bold text-[10px] w-9 h-9 flex justify-center items-center transition-colors bg-white border-slate-200 text-slate-600 dark:bg-zinc-950 dark:border-slate-700 dark:text-slate-300 hover:text-[#ff5e00]"
@@ -202,7 +225,7 @@
 
         <!-- Main Views Container -->
         <main class="flex-1 px-6 pb-6 overflow-hidden relative">
-          <!-- View 0: Executive Dashboard -->
+          <!-- View 0: Executive Dashboard (Fluid & Responsive) -->
           <div
             id="view-exec"
             class="hidden flex-col h-[calc(100vh-130px)] overflow-y-auto custom-scrollbar animate-slide-up font-sans px-3 sm:px-6 py-2"
@@ -214,6 +237,7 @@
                 <div
                   class="lg:col-span-5 p-5 rounded-3xl border shadow-sm bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 flex flex-col justify-between"
                 >
+                  <!-- Header -->
                   <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
                     <div class="flex items-center gap-2">
                       <div class="p-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-500">
@@ -225,7 +249,9 @@
                     </div>
                     <span class="text-[10px] font-semibold text-slate-400">Unique Network Paths</span>
                   </div>
+                  <!-- 2 Columns Grid -->
                   <div class="grid grid-cols-2 gap-4 pt-4 divide-x divide-slate-100 dark:divide-slate-800">
+                    <!-- Total -->
                     <div class="pr-2 flex flex-col justify-between">
                       <div>
                         <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Total</p>
@@ -241,8 +267,12 @@
                       <div
                         id="kpi-distinct-total-trips"
                         class="mt-2 text-[10px] space-y-0.5 text-slate-500 dark:text-slate-400 font-medium"
-                      ></div>
+                      >
+                        <div><strong class="text-slate-700 dark:text-slate-200">0</strong> trips/wk</div>
+                        <div class="text-[9px] text-slate-400 font-normal">(~0 trips/day • 6 days)</div>
+                      </div>
                     </div>
+                    <!-- Available -->
                     <div class="pl-4 flex flex-col justify-between">
                       <div>
                         <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Available</p>
@@ -263,7 +293,10 @@
                       <div
                         id="kpi-distinct-avail-trips"
                         class="mt-2 text-[10px] space-y-0.5 text-emerald-600 dark:text-emerald-400 font-medium"
-                      ></div>
+                      >
+                        <div><strong class="text-emerald-700 dark:text-emerald-300">0</strong> trips/wk</div>
+                        <div class="text-[9px] text-emerald-500 font-normal">(~0 trips/day • 6 days)</div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -272,6 +305,7 @@
                 <div
                   class="lg:col-span-7 p-5 rounded-3xl border shadow-sm bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 flex flex-col justify-between"
                 >
+                  <!-- Header -->
                   <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
                     <div class="flex items-center gap-2">
                       <div class="p-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/50 text-orange-500">
@@ -283,7 +317,9 @@
                     </div>
                     <span class="text-[10px] font-semibold text-slate-400">Subcontractor Level Assignments</span>
                   </div>
+                  <!-- 3 Columns Grid -->
                   <div class="grid grid-cols-3 gap-3 pt-4 divide-x divide-slate-100 dark:divide-slate-800">
+                    <!-- Total -->
                     <div class="pr-2 flex flex-col justify-between">
                       <div>
                         <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Total</p>
@@ -299,8 +335,12 @@
                       <div
                         id="kpi-carrier-total-trips"
                         class="mt-2 text-[10px] space-y-0.5 text-slate-500 dark:text-slate-400 font-medium"
-                      ></div>
+                      >
+                        <div><strong class="text-slate-700 dark:text-slate-200">0</strong> trips/wk</div>
+                        <div class="text-[9px] text-slate-400 font-normal">(~0 trips/day)</div>
+                      </div>
                     </div>
+                    <!-- Unavailable -->
                     <div class="px-3 flex flex-col justify-between">
                       <div>
                         <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Unavailable</p>
@@ -321,8 +361,12 @@
                       <div
                         id="kpi-carrier-unavail-trips"
                         class="mt-2 text-[10px] space-y-0.5 text-rose-600 dark:text-rose-400 font-medium"
-                      ></div>
+                      >
+                        <div><strong class="text-rose-700 dark:text-rose-300">0</strong> trips/wk</div>
+                        <div class="text-[9px] text-rose-500 font-normal">(~0 trips/day)</div>
+                      </div>
                     </div>
+                    <!-- Available -->
                     <div class="pl-3 flex flex-col justify-between">
                       <div>
                         <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Available</p>
@@ -343,16 +387,22 @@
                       <div
                         id="kpi-carrier-avail-trips"
                         class="mt-2 text-[10px] space-y-0.5 text-emerald-600 dark:text-emerald-400 font-medium"
-                      ></div>
+                      >
+                        <div><strong class="text-emerald-700 dark:text-emerald-300">0</strong> trips/wk</div>
+                        <div class="text-[9px] text-emerald-500 font-normal">(~0 trips/day)</div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- REGIONAL MAP & ZONE SUMMARY -->
+              <!-- ========================================================= -->
+              <!-- 2. REGIONAL MAP & ZONE SUMMARY                            -->
+              <!-- ========================================================= -->
               <div
                 class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-4 font-sans"
               >
+                <!-- Header พร้อมจัดวาง Searchable Multi-Select Dropdown ฝั่งขวา -->
                 <div
                   class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3 font-sans"
                 >
@@ -390,7 +440,7 @@
                 </div>
 
                 <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 font-sans">
-                  <!-- รายการการ์ดสรุปราย Zone -->
+                  <!-- รายการการ์ดสรุปราย Zone (5 Columns) -->
                   <div
                     id="exec-region-summary-list"
                     class="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2.5 overflow-y-auto max-h-[340px] custom-scrollbar pr-1 font-sans"
@@ -400,7 +450,7 @@
                     </div>
                   </div>
 
-                  <!-- แผนที่ Heatmap -->
+                  <!-- แผนที่ Heatmap (7 Columns) -->
                   <div
                     class="lg:col-span-7 h-[340px] rounded-2xl border border-slate-200 dark:border-slate-800 relative overflow-hidden shadow-inner font-sans"
                   >
@@ -513,7 +563,10 @@
                 </div>
               </div>
 
-              <!-- LOWER SECTION: TRUCK TYPE, CARRIER -->
+              <!-- ========================================================= -->
+              <!-- 3. LOWER SECTION: TRUCK TYPE, CARRIER                     -->
+              <!-- ========================================================= -->
+              <!-- 3.1 Available by Truck Type -->
               <div
                 class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-3 font-sans"
               >
@@ -543,6 +596,7 @@
                 </div>
               </div>
 
+              <!-- 3.2 Carrier Availability -->
               <div
                 class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-3 font-sans"
               >
@@ -617,7 +671,6 @@
                     <i data-lucide="layers" class="w-3.5 h-3.5 text-orange-500"></i>
                     MAP FILTERS
                   </h4>
-
                   <div class="flex items-center gap-2">
                     <button
                       id="btn-reset-filters"
@@ -1142,9 +1195,27 @@
                   </div>
                 </div>
               </div>
-              <!-- Map Zoom Controls -->
+
+              <!-- Map Zoom Controls (Dashboard) -->
               <div class="pointer-events-auto flex flex-col gap-1 w-8 shadow-xl" id="dash-zoom-controls">
-                <!-- Will be attached in main.js -->
+                <button
+                  onclick="if (window.dashMap) window.dashMap.zoomIn();"
+                  class="border p-1.5 rounded-t-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                >
+                  <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
+                </button>
+                <button
+                  onclick="if (window.dashMap) window.dashMap.zoomOut();"
+                  class="border-x border-y-0 p-1.5 transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                >
+                  <i data-lucide="minimize" class="w-3.5 h-3.5"></i>
+                </button>
+                <button
+                  onclick="if (window.dashMap) window.dashMap.setView([13.75, 100.5], 6);"
+                  class="border p-1.5 rounded-b-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                >
+                  <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+                </button>
               </div>
             </div>
 
@@ -1254,7 +1325,8 @@
                     <div>
                       <label class="text-[11px] font-bold mb-1 block text-slate-600 dark:text-slate-400"
                         >Customer Name (ชื่อลูกค้า)</label
-                      ><input
+                      >
+                      <input
                         id="input-customer-name"
                         type="text"
                         placeholder="กรอกชื่อลูกค้าใหม่..."
@@ -1265,7 +1337,8 @@
                       <div>
                         <label class="text-[10px] font-bold mb-1 block text-slate-500 dark:text-slate-400"
                           >Latitude (พิกัดปลายทาง)</label
-                        ><input
+                        >
+                        <input
                           id="input-lat"
                           type="text"
                           placeholder="13.7563"
@@ -1275,7 +1348,8 @@
                       <div>
                         <label class="text-[10px] font-bold mb-1 block text-slate-500 dark:text-slate-400"
                           >Longitude (พิกัดปลายทาง)</label
-                        ><input
+                        >
+                        <input
                           id="input-lng"
                           type="text"
                           placeholder="100.5018"
@@ -1294,8 +1368,9 @@
                           id="select-origin"
                           class="w-full p-2.5 rounded-xl text-xs font-bold outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white focus:border-orange-500"
                         >
-                          <option value="ทั้งหมด">กำลังโหลดข้อมูล...</option></select
-                        ><i
+                          <option value="ทั้งหมด">กำลังโหลดข้อมูล...</option>
+                        </select>
+                        <i
                           data-lucide="chevron-down"
                           class="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"
                         ></i>
@@ -1311,8 +1386,9 @@
                             id="select-dest-province"
                             class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white"
                           >
-                            <option value="ทั้งหมด">ทั้งหมด</option></select
-                          ><i
+                            <option value="ทั้งหมด">ทั้งหมด</option>
+                          </select>
+                          <i
                             data-lucide="chevron-down"
                             class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"
                           ></i>
@@ -1327,8 +1403,9 @@
                             id="select-zone"
                             class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white"
                           >
-                            <option value="ทั้งหมด">ทั้งหมด</option></select
-                          ><i
+                            <option value="ทั้งหมด">ทั้งหมด</option>
+                          </select>
+                          <i
                             data-lucide="chevron-down"
                             class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"
                           ></i>
@@ -1345,8 +1422,9 @@
                             id="select-product-category"
                             class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white"
                           >
-                            <option value="ทั้งหมด">ทั้งหมด</option></select
-                          ><i
+                            <option value="ทั้งหมด">ทั้งหมด</option>
+                          </select>
+                          <i
                             data-lucide="chevron-down"
                             class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"
                           ></i>
@@ -1361,8 +1439,9 @@
                             id="select-truck-type"
                             class="w-full p-2.5 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer border border-slate-200 dark:border-slate-700 bg-slate-50 text-slate-800 dark:bg-zinc-950 dark:text-white"
                           >
-                            <option value="ทั้งหมด">ทั้งหมด</option></select
-                          ><i
+                            <option value="ทั้งหมด">ทั้งหมด</option>
+                          </select>
+                          <i
                             data-lucide="chevron-down"
                             class="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"
                           ></i>
@@ -1402,10 +1481,9 @@
                       <span
                         class="font-extrabold text-slate-800 dark:text-white flex items-center gap-1 text-[11px]"
                         id="summary-route-label"
-                        >-
-                        <i data-lucide="arrow-right" class="w-3 h-3 text-orange-500 inline"></i>
-                        -</span
                       >
+                        - <i data-lucide="arrow-right" class="w-3 h-3 text-orange-500 inline"></i> -
+                      </span>
                     </div>
                     <div class="flex justify-between items-center text-[10px]">
                       <span class="text-slate-500"
@@ -1415,8 +1493,9 @@
                       <span
                         id="match-count-badge"
                         class="px-2 py-0.5 rounded-full font-bold bg-orange-100 text-orange-600 dark:bg-orange-950/60 dark:text-orange-400"
-                        >พบ 0 รายการ</span
                       >
+                        พบ 0 รายการ
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1433,9 +1512,29 @@
               class="flex-1 rounded-3xl border shadow-sm relative overflow-hidden bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 min-h-[400px]"
             >
               <div class="absolute inset-0 z-0" id="map-simulation"></div>
+
+              <!-- Map Zoom Controls (Simulation) -->
               <div class="absolute top-4 right-4 z-[400] flex flex-col gap-1 w-8 shadow-xl" id="sim-zoom-controls">
-                <!-- Will be attached in main.js -->
+                <button
+                  onclick="if (window.simMap) window.simMap.zoomIn();"
+                  class="border p-1.5 rounded-t-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                >
+                  <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
+                </button>
+                <button
+                  onclick="if (window.simMap) window.simMap.zoomOut();"
+                  class="border-x border-y-0 p-1.5 transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                >
+                  <i data-lucide="minimize" class="w-3.5 h-3.5"></i>
+                </button>
+                <button
+                  onclick="if (window.fitSimBounds) window.fitSimBounds();"
+                  class="border p-1.5 rounded-b-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                >
+                  <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+                </button>
               </div>
+
               <div
                 class="absolute bottom-6 right-6 px-4 py-2.5 rounded-full text-[11px] font-bold shadow-md border z-[400] flex items-center gap-4 bg-white/90 backdrop-blur-sm border-slate-200 text-slate-600 dark:bg-zinc-900/90 dark:border-slate-700 dark:text-slate-300"
               >
@@ -1467,6 +1566,44 @@
       </div>
     </div>
 
+    <!-- MODAL LEVEL 3: SHIPMENT TABLE (ดึงมาจากไฟล์เก่า) -->
+    <div
+      id="modal-shipment"
+      class="hidden fixed inset-0 z-[3500] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-slide-up"
+    >
+      <div
+        class="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-6xl max-h-[80vh] flex flex-col overflow-hidden"
+      >
+        <div
+          class="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-zinc-950"
+        >
+          <div>
+            <h3 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+              <i data-lucide="package" class="w-4 h-4 text-blue-500"></i> Shipment Details
+            </h3>
+            <p class="text-[10px] text-slate-500" id="modal-shipment-subtitle">Load ID</p>
+          </div>
+          <button
+            onclick="window.closeShipmentModal && window.closeShipmentModal()"
+            class="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800"
+          >
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+        <div class="flex-1 overflow-auto custom-scrollbar p-4">
+          <table class="w-full text-left border-collapse min-w-max text-xs">
+            <thead
+              class="sticky top-0 z-10 bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-slate-300 font-bold uppercase text-[10px]"
+            >
+              <tr id="shipment-table-head"></tr>
+            </thead>
+            <tbody id="shipment-table-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- เรียกใช้ Vite Entry Point -->
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
