@@ -109,6 +109,128 @@ window.changePage = changePage;
 window.onTableRowClick = onTableRowClick;
 window.toggleRouteDetail = toggleRouteDetail;
 window.highlightSubconRoute = highlightSubconRoute;
+window.routeTrendChart = null;
+
+// ฟังก์ชันเปิด-ปิด กล่องกราฟ Trend
+window.toggleTrendChart = function () {
+  const container = document.getElementById('trend-chart-container');
+  if (!container) return;
+
+  const isHidden = container.classList.contains('hidden') || container.classList.contains('opacity-0');
+
+  if (isHidden) {
+    container.classList.remove('hidden');
+    // หน่วงเวลาเล็กน้อยให้ CSS รัน Animation เลื่อนขึ้น
+    setTimeout(() => {
+      container.classList.remove('opacity-0', 'translate-y-10', 'pointer-events-none');
+      container.classList.add('opacity-100', 'translate-y-0', 'pointer-events-auto');
+      window.renderTrendChart();
+    }, 10);
+  } else {
+    container.classList.remove('opacity-100', 'translate-y-0', 'pointer-events-auto');
+    container.classList.add('opacity-0', 'translate-y-10', 'pointer-events-none');
+    setTimeout(() => container.classList.add('hidden'), 300);
+  }
+};
+
+// ฟังก์ชันคำนวณและวาดกราฟ ApexCharts
+window.renderTrendChart = function () {
+  const chartEl = document.querySelector('#chart-route-trend');
+  if (!chartEl) return;
+
+  const filteredData = window.currentFilteredData || window.globalRouteSheetData || [];
+  const timeframe = document.getElementById('trend-timeframe')?.value || 'week';
+
+  // 1. คำนวณปริมาณงานรวมจากข้อมูลที่กรองอยู่
+  let baseTotalTrips = 0;
+  let baseAvailTrips = 0;
+  filteredData.forEach((row) => {
+    const p = row._parsed;
+    if (p) {
+      baseTotalTrips += timeframe === 'day' ? p.tripsDay : timeframe === 'month' ? p.trips * 4 : p.trips;
+      baseAvailTrips += timeframe === 'day' ? p.availTripsDay : timeframe === 'month' ? p.availTrips * 4 : p.availTrips;
+    }
+  });
+
+  // 2. จำลองข้อมูลย้อนหลัง (Mock Time-Series) ให้กราฟดูสมจริง
+  const categories = [];
+  const dataTotal = [];
+  const dataAvail = [];
+  const dataPoints = timeframe === 'day' ? 7 : timeframe === 'week' ? 8 : 6;
+
+  const now = new Date();
+  for (let i = dataPoints - 1; i >= 0; i--) {
+    let label = '';
+    if (timeframe === 'day') {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    } else if (timeframe === 'week') {
+      label = i === 0 ? 'Current' : `Wk -${i}`;
+    } else {
+      const d = new Date(now);
+      d.setMonth(d.getMonth() - i);
+      label = d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
+    }
+    categories.push(label);
+
+    // ใส่สูตรสุ่มให้กราฟขึ้นลงประมาณ +/- 15% จากค่าเฉลี่ย
+    const fluctuate = () => 0.85 + Math.random() * 0.3;
+    dataTotal.push(Math.round(baseTotalTrips * fluctuate()));
+    dataAvail.push(Math.round(baseAvailTrips * fluctuate()));
+  }
+
+  // 3. ตั้งค่ากราฟ ApexCharts
+  const options = {
+    series: [
+      { name: 'Total Volume', data: dataTotal },
+      { name: 'Available Backhaul', data: dataAvail }
+    ],
+    chart: {
+      type: 'area',
+      height: '100%',
+      toolbar: { show: false },
+      fontFamily: 'Sarabun, sans-serif',
+      background: 'transparent',
+      animations: { enabled: true, easing: 'easeinout', speed: 800 }
+    },
+    colors: ['#64748b', '#f97316'], // Slate สำหรับงานรวม, Orange สำหรับ Backhaul
+    fill: {
+      type: 'gradient',
+      gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 100] }
+    },
+    dataLabels: { enabled: false },
+    stroke: { curve: 'smooth', width: 2.5 },
+    xaxis: {
+      categories: categories,
+      labels: { style: { colors: '#94a3b8', fontSize: '10px', fontWeight: 600 } },
+      axisBorder: { show: false },
+      axisTicks: { show: false }
+    },
+    yaxis: {
+      labels: {
+        style: { colors: '#94a3b8', fontSize: '10px', fontWeight: 600 },
+        formatter: (value) => value.toLocaleString()
+      }
+    },
+    grid: {
+      borderColor: window.state.isDark ? '#334155' : '#e2e8f0',
+      strokeDashArray: 4,
+      yaxis: { lines: { show: true } }
+    },
+    theme: { mode: window.state.isDark ? 'dark' : 'light' },
+    legend: { position: 'top', horizontalAlign: 'right', fontSize: '11px', fontWeight: 700 }
+  };
+
+  // 4. วาด หรือ อัปเดต กราฟ
+  if (window.routeTrendChart) {
+    window.routeTrendChart.updateOptions(options, false, true);
+    window.routeTrendChart.updateSeries(options.series);
+  } else {
+    window.routeTrendChart = new ApexCharts(chartEl, options);
+    window.routeTrendChart.render();
+  }
+};
 
 // 💡 สร้างสะพานเชื่อมให้ HTML ปุ่ม Zoom เข้าถึง Object แผนที่ของ Leaflet ได้
 Object.defineProperty(window, 'dashMap', { get: () => dashMap });
@@ -353,6 +475,14 @@ function updateView() {
 function switchMenu(id) {
   window.state.activeMenuId = id;
   updateView();
+
+  if (id === 'dashboard') {
+    setTimeout(() => {
+      if (typeof window.applyDynamicFilters === 'function') {
+        window.applyDynamicFilters();
+      }
+    }, 350);
+  }
 }
 
 function renderSidebarMenu() {
@@ -1169,6 +1299,12 @@ async function applyDynamicFilters() {
   clearTimeout(mapRenderDebounceTimer);
   mapRenderDebounceTimer = setTimeout(() => {
     if (window.state.activeMenuId === 'dashboard') updateMapDisplay(filteredData);
+
+    // 💡 สั่งอัปเดตกราฟทันทีเมื่อมีการเปลี่ยนฟิลเตอร์ (ถ้ากราฟเปิดอยู่)
+    const trendContainer = document.getElementById('trend-chart-container');
+    if (trendContainer && !trendContainer.classList.contains('hidden')) {
+      window.renderTrendChart();
+    }
   }, 250);
 }
 
@@ -1875,5 +2011,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.state.isDark = !window.state.isDark;
     document.documentElement.classList.toggle('dark', window.state.isDark);
     updateMapTiles();
+
+    if (window.routeTrendChart) window.renderTrendChart();
   });
 });
