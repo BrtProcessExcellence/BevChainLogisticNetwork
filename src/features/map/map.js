@@ -589,20 +589,23 @@ function drawDashboardRoutes(filteredData = []) {
   let maxTrips = 0;
 
   filteredData.forEach((item) => {
+    const p = item._parsed;
+    if (!p) return;
+
     const originName = String(item['ต้นทาง'] || item.origin || '').trim();
     const provName = String(item['จังหวัด'] || item.province || '').trim();
     let shipToDesc = String(item['Description(Ship-To (Outbound))'] || item.ship_to_desc || '').trim();
     if (!shipToDesc || shipToDesc === '-') shipToDesc = provName;
     if (!originName || !shipToDesc) return;
 
-    const routeKey = getMapRouteKey(item);
-    const tripVal = parseSafeNum(item['AVG Trip/Week'] || item.avg_trip_week, 0);
-    const pctVal = parseSafeNum(item['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'] || item.pct_total, 0);
-    const rowAvailPct = Math.max(0, 100 - pctVal);
-    const rowActualAvailTrips = tripVal * (rowAvailPct / 100);
+    const routeKey = p.mapRouteKey;
+    const tripVal = p.trips;
+    const pctVal = p.totalPct;
+    const rowActualAvailTrips = p.availTrips;
+    const rowActualAvailTripsDay = p.availTripsDay;
     const rawCarrier = String(item['Description(FwdAgent)'] || item.fwd_agent_desc || item['ผู้รับเหมา'] || '').trim();
 
-    if (!routeMap[routeKey])
+    if (!routeMap[routeKey]) {
       routeMap[routeKey] = {
         key: routeKey,
         from: originName,
@@ -611,12 +614,16 @@ function drawDashboardRoutes(filteredData = []) {
         rawRow: item,
         totalTrips: 0,
         totalAvailTrips: 0,
+        totalAvailTripsDay: 0,
         sumPct: 0,
         rowCount: 0,
         uniqueCarriers: new Set()
       };
+    }
+
     routeMap[routeKey].totalTrips += tripVal;
     routeMap[routeKey].totalAvailTrips += rowActualAvailTrips;
+    routeMap[routeKey].totalAvailTripsDay += rowActualAvailTripsDay;
     routeMap[routeKey].sumPct += pctVal;
     routeMap[routeKey].rowCount += 1;
 
@@ -710,15 +717,39 @@ function drawDashboardRoutes(filteredData = []) {
                 `<div class="text-slate-800 dark:text-slate-200 font-bold leading-snug break-words text-right">• ${c}</div>`
             )
             .join('')
-        : '-';
+        : '<span class="text-slate-400 text-right">-</span>';
 
-    const tooltipHtml = `<div class="p-2 min-w-[260px] max-w-[320px] font-sans">
-      <div class="font-bold border-b pb-1 mb-1 border-slate-200 dark:border-slate-700 text-xs ${textColor}">${route.from} &rarr; ${route.to}</div>
-      <div class="text-[11px] space-y-1.5 mt-1.5">
-        <div class="flex justify-between items-start bg-slate-50 dark:bg-zinc-800 p-2 rounded-lg gap-2"><span class="text-slate-500 dark:text-slate-400 shrink-0 font-medium text-[10px]">Carriers (${carriersList.length}):</span> <div class="flex flex-col gap-1 flex-1 min-w-0">${carriersHtml}</div></div>
-        <div class="flex flex-col gap-1 bg-slate-50 dark:bg-zinc-800 p-1.5 rounded-lg"><div class="flex justify-between items-center"><span class="text-slate-500 dark:text-slate-400 font-medium">Available Backhaul:</span> <strong class="font-black ${textColor}">${Math.round(avgAvailPct)}%</strong></div></div>
+    // 💡 ใช้งาน Tooltip แบบเต็มรูปแบบกลับมา
+    const tooltipHtml = `
+      <div class="p-2 min-w-[260px] max-w-[320px] font-sans">
+        <div class="font-bold border-b pb-1 mb-1 border-slate-200 dark:border-slate-700 text-xs ${textColor}">
+          ${route.from} &rarr; ${route.to}
+        </div>
+        <div class="text-[11px] space-y-1.5 mt-1.5">
+          <div class="flex justify-between items-start bg-slate-50 dark:bg-zinc-800 p-2 rounded-lg gap-2">
+            <span class="text-slate-500 dark:text-slate-400 shrink-0 font-medium text-[10px]">Carriers (${carriersList.length}):</span> 
+            <div class="flex flex-col gap-1 flex-1 min-w-0">${carriersHtml}</div>
+          </div>
+          <div class="flex justify-between items-center bg-slate-50 dark:bg-zinc-800 p-1.5 rounded-lg">
+            <span class="text-slate-500 dark:text-slate-400 font-medium">Sum Trip/Week:</span> 
+            <strong class="text-slate-800 dark:text-slate-200 font-bold">${route.totalTrips.toFixed(2)} trips/wk</strong>
+          </div>
+          <div class="flex flex-col gap-1 bg-slate-50 dark:bg-zinc-800 p-1.5 rounded-lg">
+            <div class="flex justify-between items-center">
+              <span class="text-slate-500 dark:text-slate-400 font-medium">Available Backhaul:</span> 
+              <strong class="font-black ${textColor}">${Math.round(avgAvailPct)}%</strong>
+            </div>
+            <div class="w-full bg-slate-200 dark:bg-zinc-700 h-1.5 rounded-full overflow-hidden mt-0.5">
+              <div class="h-full transition-all" style="width: ${Math.min(avgAvailPct, 100)}%; background-color: ${lineColor}"></div>
+            </div>
+            <div class="flex justify-between items-center text-[10px] mt-1 pt-1 border-t border-slate-200/50 dark:border-slate-700">
+              <span class="text-slate-400">Available Volume:</span>
+              <strong class="${textColor}">~${route.totalAvailTrips.toFixed(1)} trips/wk <span class="text-[9px] font-normal text-slate-400">(~${route.totalAvailTripsDay.toFixed(1)} trips/day)</span></strong>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>`;
+    `;
 
     mainPolyline.bindTooltip(tooltipHtml, { sticky: true, className: 'custom-leaflet-tooltip' });
     destDotMarker.bindTooltip(tooltipHtml, { sticky: true, className: 'custom-leaflet-tooltip' });

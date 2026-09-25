@@ -966,10 +966,29 @@ function updateFilterLabel(filterId, defaultLabel = 'All') {
 }
 
 function toggleCustomDropdown(dropdownId) {
+  const targetDropdown = document.getElementById(dropdownId);
+  const isCurrentlyHidden = targetDropdown?.classList.contains('hidden');
+
+  // ปิด Dropdown ทั้งหมดและรีเซ็ตลูกศรกลับเป็น chevron-down
   document.querySelectorAll('.custom-select-dropdown').forEach((el) => {
-    if (el.id !== dropdownId) el.classList.add('hidden');
+    el.classList.add('hidden');
   });
-  document.getElementById(dropdownId)?.classList.toggle('hidden');
+  document.querySelectorAll('.custom-select-container button i[data-lucide]').forEach((icon) => {
+    icon.setAttribute('data-lucide', 'chevron-down');
+  });
+
+  // ถ้าตัวที่คลิกกำลังซ่อนอยู่ ให้เปิด และเปลี่ยนลูกศรเป็น chevron-up
+  if (isCurrentlyHidden && targetDropdown) {
+    targetDropdown.classList.remove('hidden');
+    const container = targetDropdown.closest('.custom-select-container');
+    if (container) {
+      const icon = container.querySelector('button i[data-lucide]');
+      if (icon) icon.setAttribute('data-lucide', 'chevron-up');
+    }
+  }
+
+  // รีเฟรชไอคอน
+  if (typeof window.lucide !== 'undefined') window.lucide.createIcons();
 }
 
 function filterDropdownList(filterId, keyword) {
@@ -1519,10 +1538,17 @@ function onTableRowClick(mapRouteKey, grpId) {
 function focusTableRowByMapKey(mapKey) {
   if (!mapKey) return;
   const tc = document.getElementById('table-container');
+  const chevron = document.getElementById('table-chevron'); // ดึงลูกศรตารางมา
   if (tc && tc.classList.contains('table-hidden')) {
     window.state.isTableExpanded = true;
     tc.classList.remove('table-hidden');
     tc.classList.add('table-expanded');
+
+    // อัปเดตลูกศรให้ชี้ลงเมื่อตารางกางออก
+    if (chevron && typeof window.lucide !== 'undefined') {
+      chevron.setAttribute('data-lucide', 'chevron-down');
+      window.lucide.createIcons({ root: chevron.parentElement });
+    }
   }
   const sourceData =
     window.currentFilteredData && window.currentFilteredData.length > 0
@@ -1709,7 +1735,7 @@ function backToSimInput() {
 // 9. EVENT LISTENERS SETUP
 // ==============================================================================
 function setupEventListeners() {
-  // Sidebar Toggle
+  // 1. Sidebar Toggle
   document.getElementById('toggle-sidebar')?.addEventListener('click', () => {
     window.state.isSidebarOpen = !window.state.isSidebarOpen;
     const sb = document.getElementById('sidebar');
@@ -1730,34 +1756,62 @@ function setupEventListeners() {
     }, 310);
   });
 
-  // Table Toggle
+  // 2. Table Toggle (สลับลูกศรขึ้น/ลง ของตาราง)
   document.getElementById('toggle-table')?.addEventListener('click', () => {
     window.state.isTableExpanded = !window.state.isTableExpanded;
     const tc = document.getElementById('table-container');
+    const chevron = document.getElementById('table-chevron');
     if (tc) {
       tc.classList.toggle('table-hidden', !window.state.isTableExpanded);
       tc.classList.toggle('table-expanded', window.state.isTableExpanded);
     }
+    if (chevron && typeof window.lucide !== 'undefined') {
+      chevron.setAttribute('data-lucide', window.state.isTableExpanded ? 'chevron-down' : 'chevron-up');
+      window.lucide.createIcons({ root: chevron.parentElement });
+    }
     if (dashMap) setTimeout(() => dashMap.invalidateSize(), 300);
   });
 
-  // Filters Toggles
+  // 3. Filters Toggles - Main (สลับลูกศรขึ้น/ลง ของแผงค้นหาหลัก)
   document.getElementById('toggle-filters-main')?.addEventListener('click', () => {
-    document.getElementById('filters-content')?.classList.toggle('hidden');
-  });
-  document.querySelectorAll('.filter-accordion-toggle').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.getElementById(btn.getAttribute('data-target'))?.classList.toggle('hidden');
-    });
-  });
-
-  document.addEventListener('click', (event) => {
-    if (!event.target.closest('.custom-select-container')) {
-      document.querySelectorAll('.custom-select-dropdown').forEach((el) => el.classList.add('hidden'));
+    const content = document.getElementById('filters-content');
+    const chevron = document.getElementById('filters-main-chevron');
+    if (content) {
+      content.classList.toggle('hidden');
+      if (chevron && typeof window.lucide !== 'undefined') {
+        chevron.setAttribute('data-lucide', content.classList.contains('hidden') ? 'chevron-down' : 'chevron-up');
+        window.lucide.createIcons({ root: chevron.parentElement });
+      }
     }
   });
 
-  // Inputs Debouncing
+  // 4. Filters Toggles - Accordions (สลับลูกศรขึ้น/ลง ของหมวดย่อย)
+  document.querySelectorAll('.filter-accordion-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const targetEl = document.getElementById(btn.getAttribute('data-target'));
+      const chevron = btn.querySelector('.accordion-chevron');
+      if (targetEl) {
+        targetEl.classList.toggle('hidden');
+        if (chevron && typeof window.lucide !== 'undefined') {
+          chevron.setAttribute('data-lucide', targetEl.classList.contains('hidden') ? 'chevron-down' : 'chevron-up');
+          window.lucide.createIcons({ root: btn });
+        }
+      }
+    });
+  });
+
+  // 5. ปิด Custom Dropdown เมื่อคลิกที่อื่น (พร้อมคืนค่าลูกศรกลับเป็นชี้ลง)
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.custom-select-container')) {
+      document.querySelectorAll('.custom-select-dropdown').forEach((el) => el.classList.add('hidden'));
+      document.querySelectorAll('.custom-select-container button i[data-lucide]').forEach((icon) => {
+        icon.setAttribute('data-lucide', 'chevron-down');
+      });
+      if (typeof window.lucide !== 'undefined') window.lucide.createIcons();
+    }
+  });
+
+  // 6. Inputs Debouncing
   const searchInput = document.querySelector('#filters-content input[type="text"]');
   if (searchInput)
     searchInput.addEventListener('input', () => {
@@ -1772,7 +1826,7 @@ function setupEventListeners() {
     });
   });
 
-  // Display Mode
+  // 7. Display Mode
   document.querySelectorAll('#display-mode-segmented .mode-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       const selectedBtn = e.currentTarget;
@@ -1790,7 +1844,7 @@ function setupEventListeners() {
     });
   });
 
-  // 💡 คืนค่าปุ่มสลับภาษา TH/EN
+  // 8. ปุ่มสลับภาษา TH/EN
   document.getElementById('toggle-lang')?.addEventListener('click', (e) => {
     e.preventDefault();
     const currentLang = localStorage.getItem('app_lang') || 'th';

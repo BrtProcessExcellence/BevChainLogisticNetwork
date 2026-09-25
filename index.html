@@ -219,7 +219,7 @@
 
         <!-- Main Views Container -->
         <main class="flex-1 px-6 pb-6 overflow-hidden relative">
-          <!-- View 1: Executive Dashboard (Fluid & Responsive) -->
+          <!-- View 1: Executive Dashboard -->
           <div
             id="view-exec"
             class="hidden flex-col h-[calc(100vh-130px)] overflow-y-auto custom-scrollbar animate-slide-up font-sans px-3 sm:px-6 py-2"
@@ -227,7 +227,7 @@
             <div class="w-full max-w-[1600px] mx-auto flex flex-col gap-5 font-sans transition-all duration-300">
               <!-- Top Executive KPI Summary -->
               <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 font-sans">
-                <!-- Left Card: Distinct Route (5 Columns) -->
+                <!-- Left Card: Distinct Route -->
                 <div
                   class="lg:col-span-5 p-5 rounded-3xl border shadow-sm bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 flex flex-col justify-between"
                 >
@@ -260,7 +260,7 @@
                         class="mt-2 text-[10px] space-y-0.5 text-slate-500 dark:text-slate-400 font-medium"
                       >
                         <div><strong class="text-slate-700 dark:text-slate-200">0</strong> trips/wk</div>
-                        <div class="text-[9px] text-slate-400 font-normal">(~0 trips/day • 6 days)</div>
+                        <div class="text-[9px] text-slate-400 font-normal">(~0 trips/day)</div>
                       </div>
                     </div>
                     <div class="pl-4 flex flex-col justify-between">
@@ -285,13 +285,13 @@
                         class="mt-2 text-[10px] space-y-0.5 text-emerald-600 dark:text-emerald-400 font-medium"
                       >
                         <div><strong class="text-emerald-700 dark:text-emerald-300">0</strong> trips/wk</div>
-                        <div class="text-[9px] text-emerald-500 font-normal">(~0 trips/day • 6 days)</div>
+                        <div class="text-[9px] text-emerald-500 font-normal">(~0 trips/day)</div>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <!-- Right Card: Carrier Route Breakdown (7 Columns) -->
+                <!-- Right Card: Carrier Route Breakdown -->
                 <div
                   class="lg:col-span-7 p-5 rounded-3xl border shadow-sm bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 flex flex-col justify-between"
                 >
@@ -434,8 +434,9 @@
                   >
                     <div id="map-exec-heatmap" class="w-full h-full z-0"></div>
 
+                    <!-- Legend -->
                     <div
-                      class="absolute bottom-2.5 left-2.5 z-[400] bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md p-2.5 px-3 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xl font-sans min-w-[170px] pointer-events-auto"
+                      class="absolute bottom-2.5 left-2.5 z-[500] bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md p-2.5 px-3 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xl font-sans min-w-[170px] pointer-events-auto"
                     >
                       <div
                         class="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800"
@@ -482,9 +483,41 @@
                         </div>
                       </div>
                     </div>
+
+                    <!-- Zoom Fix -->
+                    <div class="absolute top-4 right-4 z-[500] flex flex-col gap-1 w-8 shadow-xl pointer-events-auto">
+                      <button
+                        onclick="window.execMap.zoomIn()"
+                        class="border p-1.5 rounded-t-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                      >
+                        <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
+                      </button>
+                      <button
+                        onclick="window.execMap.zoomOut()"
+                        class="border-x border-y-0 p-1.5 transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                      >
+                        <i data-lucide="minimize" class="w-3.5 h-3.5"></i>
+                      </button>
+                      <button
+                        onclick="window.execMap.setView([13.75, 100.5], 5)"
+                        class="border p-1.5 rounded-b-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
+                      >
+                        <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+                      </button>
+                    </div>
+
+                    <!-- Badge -->
+                    <div
+                      class="absolute bottom-2.5 right-2.5 px-3 py-1.5 rounded-full text-[10px] font-bold backdrop-blur-md bg-white/90 dark:bg-zinc-900/90 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 z-[500] shadow-sm flex items-center gap-1.5 font-sans pointer-events-auto"
+                    >
+                      <i data-lucide="flame" class="w-3.5 h-3.5 text-orange-500"></i>
+                      <span class="font-sans">Available Backhaul Heatmap</span>
+                    </div>
                   </div>
                 </div>
+                <!-- 💡 ปิด Grid 12 Columns -->
               </div>
+              <!-- 💡 ปิดการ์ด REGIONAL MAP -->
 
               <!-- ตาราง Drill-down รายละเอียด Route เมื่อคลิกเลือก Zone -->
               <div
@@ -533,7 +566,7 @@
                 </div>
               </div>
 
-              <!-- LOWER SECTION: TRUCK TYPE, CARRIER -->
+              <!-- LOWER SECTION: TRUCK TYPE -->
               <div
                 class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-3 font-sans"
               >
@@ -563,6 +596,7 @@
                 </div>
               </div>
 
+              <!-- LOWER SECTION: CARRIER -->
               <div
                 class="p-5 rounded-3xl border shadow-md bg-white border-slate-200 dark:bg-zinc-900 dark:border-slate-800 space-y-3 font-sans"
               >
@@ -611,7 +645,9 @@
                 </div>
               </div>
             </div>
+            <!-- 💡 ปิด w-full max-w-[1600px] -->
           </div>
+          <!-- 💡 ปิด view-exec -->
 
           <!-- View 2: Route Dashboard -->
           <div
@@ -1147,19 +1183,19 @@
               <!-- Map Zoom Controls -->
               <div class="pointer-events-auto flex flex-col gap-1 w-8 shadow-xl">
                 <button
-                  onclick="dashMap.zoomIn()"
+                  onclick="window.dashMap.zoomIn()"
                   class="border p-1.5 rounded-t-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
                 >
                   <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
                 </button>
                 <button
-                  onclick="dashMap.zoomOut()"
+                  onclick="window.dashMap.zoomOut()"
                   class="border-x border-y-0 p-1.5 transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
                 >
                   <i data-lucide="minimize" class="w-3.5 h-3.5"></i>
                 </button>
                 <button
-                  onclick="dashMap.setView([13.75, 100.5], 6)"
+                  onclick="window.dashMap.setView([13.75, 100.5], 6)"
                   class="border p-1.5 rounded-b-lg transition-colors backdrop-blur-md bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-zinc-900/95 dark:border-slate-800 dark:text-white dark:hover:bg-slate-700"
                 >
                   <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
@@ -1254,6 +1290,44 @@
       </div>
     </div>
 
+    <!-- MODAL LEVEL 3: SHIPMENT TABLE -->
+    <div
+      id="modal-shipment"
+      class="hidden fixed inset-0 z-[3500] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-slide-up"
+    >
+      <div
+        class="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-6xl max-h-[80vh] flex flex-col overflow-hidden"
+      >
+        <div
+          class="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-zinc-950"
+        >
+          <div>
+            <h3 class="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+              <i data-lucide="package" class="w-4 h-4 text-blue-500"></i> Shipment Details
+            </h3>
+            <p class="text-[10px] text-slate-500" id="modal-shipment-subtitle">Load ID</p>
+          </div>
+          <button
+            onclick="closeShipmentModal()"
+            class="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800"
+          >
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+        <div class="flex-1 overflow-auto custom-scrollbar p-4">
+          <table class="w-full text-left border-collapse min-w-max text-xs">
+            <thead
+              class="sticky top-0 z-10 bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-slate-300 font-bold uppercase text-[10px]"
+            >
+              <tr id="shipment-table-head"></tr>
+            </thead>
+            <tbody id="shipment-table-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- เรียกใช้ Vite Entry Point -->
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
