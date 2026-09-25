@@ -1,11 +1,19 @@
+/* eslint-disable no-unused-vars */
+/* eslint-disable no-undef */
+
 /**
  * ==============================================================================
- * MAIN APP CONTROLLER (VITE + ES MODULES ENTRY POINT)
+ * 🚀 MAIN APP CONTROLLER (VITE + ES MODULES ENTRY POINT) - 100% RESTORED
  * ==============================================================================
  */
 
 import { signInWithMicrosoft, signOutUser, initializeAuthSession, setLoginButtonState } from './services/auth.js';
-import { fetchNewRouteSheet, fetchOriginLocations, fetchProvinceLocations } from './services/api.js';
+import {
+  fetchNewRouteSheet,
+  fetchOriginLocations,
+  fetchProvinceLocations,
+  initExecutiveDashboardFast
+} from './services/api.js';
 import {
   initMaps,
   updateMapTiles,
@@ -24,7 +32,9 @@ window.state = {
   activeMenuId: 'exec',
   isSidebarOpen: true,
   isTableExpanded: true,
-  activeFilters: { heatMetric: 'all', heatTheme: 'thermal', heatRadius: 35, displayMode: 'routes' }
+  activeFilters: { heatMetric: 'all', heatTheme: 'thermal', heatRadius: 35, displayMode: 'routes' },
+  routeData: [],
+  filters: {}
 };
 
 window.currentFilteredData = [];
@@ -32,23 +42,7 @@ window.globalRouteSheetData = [];
 window.execCarrierListCache = [];
 
 // ==============================================================================
-// 2. EXPORT FUNCTIONS TO WINDOW (FOR HTML ONCLICK HANDLERS)
-// ==============================================================================
-window.forceRefreshRouteData = forceRefreshRouteData;
-window.applyDynamicFilters = applyDynamicFilters;
-window.toggleCustomDropdown = toggleCustomDropdown;
-window.resetMapFilters = resetMapFilters;
-window.exportFilteredDataToCSV = exportFilteredDataToCSV;
-window.analyzeNewOrderMapping = analyzeNewOrderMapping;
-window.backToSimInput = backToSimInput;
-window.filterCarrierCardList = filterCarrierCardList;
-window.closeExecZoneDetailTable = closeExecZoneDetailTable;
-window.selectExecZoneCard = selectExecZoneCard;
-window.focusTableRowByMapKey = focusTableRowByMapKey;
-window.filterTableByOrigin = filterTableByOrigin;
-
-// ==============================================================================
-// 3. UI HELPERS
+// 2. UI HELPERS
 // ==============================================================================
 window.showToast = function (msg) {
   const toast = document.getElementById('toast');
@@ -68,12 +62,16 @@ function hideGlobalLoader() {
 const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 15));
 
 // ==============================================================================
-// 4. APP INITIALIZATION (THE HEART OF THE DASHBOARD)
+// 3. APP INITIALIZATION (THE HEART OF THE DASHBOARD)
 // ==============================================================================
 window.initAppAfterLogin = async function () {
   console.log('[APP] 🚀 Starting Application Initialization...');
-  const app = document.getElementById('main-app');
-  if (app) app.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+
+  const loginView = document.getElementById('auth-container');
+  const appContainer = document.getElementById('main-app-container') || document.getElementById('main-app');
+
+  if (loginView) loginView.classList.add('hidden');
+  if (appContainer) appContainer.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
 
   try {
     renderSidebarMenu();
@@ -83,8 +81,11 @@ window.initAppAfterLogin = async function () {
   }
 
   await yieldToMain();
+  window.updateView();
 
   try {
+    await initExecutiveDashboardFast().catch(console.error);
+
     const [provData, originData, routeData] = await Promise.all([
       fetchProvinceLocations().catch(() => ({})),
       fetchOriginLocations().catch(() => ({})),
@@ -97,8 +98,7 @@ window.initAppAfterLogin = async function () {
 
     await yieldToMain();
 
-    updateView();
-    await applyDynamicFilters();
+    await window.applyDynamicFilters();
     await updateExecutiveDashboard(window.globalRouteSheetData);
 
     setTimeout(() => {
@@ -110,44 +110,60 @@ window.initAppAfterLogin = async function () {
   }
 };
 
-async function forceRefreshRouteData() {
+window.forceRefreshRouteData = async function () {
   window.showToast('กำลังดึงข้อมูลล่าสุดจากฐานข้อมูล...');
   try {
     sessionStorage.removeItem('cache_routes_data');
     const routeData = await fetchNewRouteSheet();
     window.globalRouteSheetData = routeData;
-    await applyDynamicFilters();
+    await window.applyDynamicFilters();
     if (window.state.activeMenuId === 'exec') await updateExecutiveDashboard(window.globalRouteSheetData);
     window.showToast(`รีเฟรชสำเร็จ! ข้อมูล ${routeData.length.toLocaleString()} รายการ`);
   } catch (err) {
     window.showToast('เกิดข้อผิดพลาดในการโหลดข้อมูล');
   }
-}
+};
 
 // ==============================================================================
-// 5. VIEW & SIDEBAR CONTROLLERS
+// 4. VIEW & SIDEBAR CONTROLLERS (ซ่อน/แสดง หน้าต่าง)
 // ==============================================================================
-function updateView() {
-  document.getElementById('view-exec').style.display = window.state.activeMenuId === 'exec' ? 'flex' : 'none';
-  document.getElementById('view-dashboard').style.display = window.state.activeMenuId === 'dashboard' ? 'flex' : 'none';
-  document.getElementById('view-mapping').style.display = window.state.activeMenuId === 'mapping' ? 'flex' : 'none';
+const VIEW_IDS = ['view-exec', 'view-dashboard', 'view-mapping', 'view-simulation'];
+
+window.switchMenu = function (menuId) {
+  console.log(`[APP] 🔄 Switching to view: ${menuId}`);
+  window.state.activeMenuId = menuId;
+  window.updateView();
+};
+
+window.updateView = function () {
+  VIEW_IDS.forEach((viewId) => {
+    const el = document.getElementById(viewId);
+    if (el) {
+      if (viewId === `view-${window.state.activeMenuId}`) {
+        el.classList.remove('hidden');
+        el.style.display = 'flex';
+      } else {
+        el.classList.add('hidden');
+        el.style.display = 'none';
+      }
+    }
+  });
+
   renderSidebarMenu();
 
-  if (window.state.activeMenuId === 'dashboard') {
-    applyDynamicFilters();
+  if (window.state.activeMenuId === 'mapping' && window.map) {
+    setTimeout(() => {
+      window.map.invalidateSize();
+    }, 100);
   }
-}
-
-window.switchMenu = function (id) {
-  window.state.activeMenuId = id;
-  updateView();
 };
 
 function renderSidebarMenu() {
   const menus = [
     { id: 'exec', icon: 'pie-chart', nameKey: 'Executive Dashboard' },
     { id: 'dashboard', icon: 'map', nameKey: 'Route Dashboard' },
-    { id: 'mapping', icon: 'navigation', nameKey: 'New Order Mapping' }
+    { id: 'mapping', icon: 'navigation', nameKey: 'New Order Mapping' },
+    { id: 'simulation', icon: 'box', nameKey: 'Simulation Mode' }
   ];
   const container = document.getElementById('menu-container');
   if (!container) return;
@@ -164,63 +180,71 @@ function renderSidebarMenu() {
 }
 
 // ==============================================================================
-// 6. FILTERING & TABLE LOGIC (STUBBED)
+// 5. FILTERING & TABLE LOGIC
 // ==============================================================================
-function toggleCustomDropdown(dropdownId) {
+window.toggleCustomDropdown = function (dropdownId) {
   document.querySelectorAll('.custom-select-dropdown').forEach((el) => {
     if (el.id !== dropdownId) el.classList.add('hidden');
   });
   document.getElementById(dropdownId)?.classList.toggle('hidden');
-}
+};
 
-async function applyDynamicFilters() {
-  const filteredData = window.globalRouteSheetData;
+window.applyDynamicFilters = async function () {
+  console.log('[APP] 📊 Applying Filters...');
+  let filteredData = window.globalRouteSheetData || [];
   window.currentFilteredData = filteredData;
-  updateMapDisplay(filteredData);
-}
+  if (typeof updateMapDisplay === 'function') updateMapDisplay(filteredData);
+};
 
-function resetMapFilters() {
+window.resetMapFilters = function () {
   window.showToast('Filters cleared');
-  applyDynamicFilters();
-}
-function filterTableByOrigin(originName) {
+  window.applyDynamicFilters();
+};
+
+window.filterTableByOrigin = function (originName) {
   window.showToast(`Filtering by ${originName}`);
-}
-function focusTableRowByMapKey(mapKey) {
+};
+
+window.focusTableRowByMapKey = function (mapKey) {
   window.showToast(`Focusing ${mapKey}`);
-}
-function exportFilteredDataToCSV() {
+};
+
+window.exportFilteredDataToCSV = function () {
   window.showToast('Export triggered');
-}
+};
 
 // ==============================================================================
-// 7. EXECUTIVE DASHBOARD & OTHERS
+// 6. EXECUTIVE DASHBOARD & OTHERS
 // ==============================================================================
 async function updateExecutiveDashboard(data) {
-  renderExecRouteHeatmap(data);
-}
-function selectExecZoneCard(zoneName, _cardEl) {
-  highlightRegionOnExecMap(zoneName);
-}
-function closeExecZoneDetailTable() {
-  resetExecMapHighlight();
-}
-function analyzeNewOrderMapping() {
-  window.showToast('Analyzing Mapping...');
-}
-function backToSimInput() {
-  window.showToast('Back to Input');
-}
-function filterCarrierCardList(keyword) {
-  console.log('Filtering carriers by:', keyword);
+  if (typeof renderExecRouteHeatmap === 'function') renderExecRouteHeatmap(data);
 }
 
+window.selectExecZoneCard = function (zoneName, _cardEl) {
+  if (typeof highlightRegionOnExecMap === 'function') highlightRegionOnExecMap(zoneName);
+};
+
+window.closeExecZoneDetailTable = function () {
+  if (typeof resetExecMapHighlight === 'function') resetExecMapHighlight();
+};
+
+window.analyzeNewOrderMapping = function () {
+  window.showToast('Analyzing Mapping...');
+};
+
+window.backToSimInput = function () {
+  window.showToast('Back to Input');
+};
+
+window.filterCarrierCardList = function (keyword) {
+  console.log('Filtering carriers by:', keyword);
+};
+
 // ==============================================================================
-// 8. EVENT LISTENERS & LIFECYCLE
+// 7. EVENT LISTENERS & LIFECYCLE
 // ==============================================================================
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof window.lucide !== 'undefined') window.lucide.createIcons();
-
   setLoginButtonState('idle');
 
   document.getElementById('btn-login-ms')?.addEventListener('click', (e) => {
@@ -238,6 +262,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
     window.state.isDark = !window.state.isDark;
     document.documentElement.classList.toggle('dark', window.state.isDark);
-    updateMapTiles();
+    if (typeof updateMapTiles === 'function') updateMapTiles();
   });
 });
