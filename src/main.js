@@ -297,16 +297,13 @@ async function forceRefreshRouteData() {
 function updateView() {
   const execView = document.getElementById('view-exec');
   const dashView = document.getElementById('view-dashboard');
-  const mapKeyView = document.getElementById('view-mapping');
 
   if (execView) execView.style.display = window.state.activeMenuId === 'exec' ? 'flex' : 'none';
   if (dashView) dashView.style.display = window.state.activeMenuId === 'dashboard' ? 'flex' : 'none';
-  if (mapKeyView) mapKeyView.style.display = window.state.activeMenuId === 'mapping' ? 'flex' : 'none';
 
   const menuHeaders = {
     exec: { title: 'Executive Dashboard', subtitle: "Summarize route data for management's view" },
-    dashboard: { title: 'Route Dashboard', subtitle: 'Existing routes and available backhaul data' },
-    mapping: { title: 'New Order Mapping', subtitle: 'Simulate routes, match subcontractors & backhaul' }
+    dashboard: { title: 'Route Dashboard', subtitle: 'Existing routes and available backhaul data' }
   };
 
   const hTitle = document.getElementById('header-title');
@@ -319,12 +316,9 @@ function updateView() {
   renderSidebarMenu();
 
   setTimeout(() => {
-    if (window.state.activeMenuId === 'exec' && execMap) execMap.invalidateSize();
-    if (window.state.activeMenuId === 'dashboard' && dashMap) dashMap.invalidateSize();
-    if (window.state.activeMenuId === 'mapping') {
-      if (simMap) simMap.invalidateSize();
-      initNewOrderMappingDropdowns();
-    }
+    if (window.state.activeMenuId === 'exec' && typeof execMap !== 'undefined' && execMap) execMap.invalidateSize();
+    if (window.state.activeMenuId === 'dashboard' && typeof dashMap !== 'undefined' && dashMap)
+      dashMap.invalidateSize();
   }, 300);
 }
 
@@ -336,8 +330,7 @@ function switchMenu(id) {
 function renderSidebarMenu() {
   const menus = [
     { id: 'exec', icon: 'pie-chart', nameKey: 'Executive Dashboard' },
-    { id: 'dashboard', icon: 'map', nameKey: 'Route Dashboard' },
-    { id: 'mapping', icon: 'navigation', nameKey: 'New Order Mapping' }
+    { id: 'dashboard', icon: 'map', nameKey: 'Route Dashboard' }
   ];
   const container = document.getElementById('menu-container');
   if (!container) return;

@@ -99,6 +99,7 @@ function getCurvePoints(lat1, lng1, lat2, lng2, offset = 0) {
 // ==============================================================================
 // 2. MAP INITIALIZATION & TILES
 // ==============================================================================
+// หาฟังก์ชัน initMaps() แล้วแก้โค้ดให้เอาส่วนของ map-simulation ออกไป
 export function initMaps() {
   console.debug('[MAP] initMaps started');
 
@@ -112,25 +113,12 @@ export function initMaps() {
   };
 
   const dashContainer = document.getElementById('map-dashboard');
-
   if (dashContainer && !dashMap) {
     dashMap = L.map('map-dashboard', mapOptions).setView([13.75, 100.5], 6);
     dashLayerGrp = L.layerGroup().addTo(dashMap);
     initMapPanes(dashMap);
-
     routeCanvasRenderer = L.canvas({ pane: 'routePane', padding: 0.5 });
     dotCanvasRenderer = L.canvas({ pane: 'destDotPane', padding: 0.5 });
-  }
-
-  const simContainer = document.getElementById('map-simulation');
-  if (simContainer) {
-    if (simMap) {
-      simMap.remove();
-      simMap = null;
-    }
-    simMap = L.map('map-simulation', mapOptions).setView([13.75, 100.5], 6);
-    simLayerGrp = L.layerGroup().addTo(simMap);
-    initMapPanes(simMap);
   }
 
   const execMapContainer = document.getElementById('map-exec-heatmap');
