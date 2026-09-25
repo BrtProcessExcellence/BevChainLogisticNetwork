@@ -1,48 +1,101 @@
-/* eslint-disable no-unused-vars */
-/* eslint-disable no-undef */
-
 /**
  * ==============================================================================
- * 🚀 MAIN APP CONTROLLER (VITE + ES MODULES ENTRY POINT) - 100% RESTORED
+ * MAIN APP CONTROLLER (VITE + ES MODULES ENTRY POINT - FULLY RESTORED)
  * ==============================================================================
  */
 
-import { signInWithMicrosoft, signOutUser, initializeAuthSession, setLoginButtonState } from './services/auth.js';
+import { supabase } from './lib/supabase.js';
+import { dict, LOGISTICS_DICT, REVERSE_DICT, t, applySmartTranslation, currentAppLang } from './config/constants.js';
+import {
+  signInWithMicrosoft,
+  signOutUser,
+  initializeAuthSession,
+  updateUserProfileUI,
+  setLoginButtonState
+} from './services/auth.js';
 import {
   fetchNewRouteSheet,
+  fetchExecProvinceSummary,
   fetchOriginLocations,
   fetchProvinceLocations,
-  initExecutiveDashboardFast
+  fetchExecutiveSummaryKPI,
+  initExecutiveDashboardFast,
+  loadDetailedRoutesInBackground
 } from './services/api.js';
 import {
+  dashMap,
+  simMap,
+  execMap,
   initMaps,
   updateMapTiles,
   renderExecRouteHeatmap,
   highlightRegionOnExecMap,
   resetExecMapHighlight,
-  updateMapDisplay
+  updateMapDisplay,
+  drawAllSheetRoutesOnSimMap,
+  resetMapRouteStyles,
+  highlightMapRoute
 } from './features/map/map.js';
+import { parseNum, formatNum, cleanAllSpaces, escapeHtml, escapeAttr } from './utils/helpers.js';
 
 // ==============================================================================
-// 1. GLOBAL STATE
+// 1. GLOBAL STATE & CONSTANTS
 // ==============================================================================
+const WORKING_DAYS_PER_WEEK = 6;
+const PAGE_SIZE = 50;
+
 window.state = {
   isDark: false,
   lang: 'en',
   activeMenuId: 'exec',
   isSidebarOpen: true,
   isTableExpanded: true,
-  activeFilters: { heatMetric: 'all', heatTheme: 'thermal', heatRadius: 35, displayMode: 'routes' },
-  routeData: [],
-  filters: {}
+  simState: 'input',
+  activeFilters: { heatMetric: 'quota', heatTheme: 'thermal', heatRadius: 35, displayMode: 'routes' }
 };
 
 window.currentFilteredData = [];
 window.globalRouteSheetData = [];
 window.execCarrierListCache = [];
+window.execAllRoutesCache = [];
+window.currentGroupKeys = [];
+window.currentGroupMap = {};
+window.provinceLocationMap = {};
+window.originLocationMap = {};
+let shipToLocationMap = {};
+
+let currentPage = 1;
+let regionChart = null;
+
+let searchDebounceTimer = null;
+let numericDebounceTimer = null;
+let mapRenderDebounceTimer = null;
 
 // ==============================================================================
-// 2. UI HELPERS
+// 2. EXPORT FUNCTIONS TO WINDOW (FOR HTML ONCLICK HANDLERS)
+// ==============================================================================
+window.forceRefreshRouteData = forceRefreshRouteData;
+window.applyDynamicFilters = applyDynamicFilters;
+window.toggleCustomDropdown = toggleCustomDropdown;
+window.resetMapFilters = resetMapFilters;
+window.exportFilteredDataToCSV = exportFilteredDataToCSV;
+window.analyzeNewOrderMapping = analyzeNewOrderMapping;
+window.backToSimInput = backToSimInput;
+window.filterCarrierCardList = filterCarrierCardList;
+window.closeExecZoneDetailTable = closeExecZoneDetailTable;
+window.selectExecZoneCard = selectExecZoneCard;
+window.focusTableRowByMapKey = focusTableRowByMapKey;
+window.filterTableByOrigin = filterTableByOrigin;
+window.switchMenu = switchMenu;
+window.filterDropdownList = filterDropdownList;
+window.handleCheckboxChange = handleCheckboxChange;
+window.changePage = changePage;
+window.onTableRowClick = onTableRowClick;
+window.toggleRouteDetail = toggleRouteDetail;
+window.highlightSubconRoute = highlightSubconRoute;
+
+// ==============================================================================
+// 3. UI HELPERS & FORMATTING
 // ==============================================================================
 window.showToast = function (msg) {
   const toast = document.getElementById('toast');
@@ -54,6 +107,13 @@ window.showToast = function (msg) {
   }
 };
 
+function showGlobalLoader(message = 'กำลังโหลดข้อมูล...') {
+  const loader = document.getElementById('app-global-loader');
+  const textEl = document.getElementById('app-loader-text');
+  if (textEl) textEl.textContent = message;
+  if (loader) loader.classList.remove('loader-hidden');
+}
+
 function hideGlobalLoader() {
   const loader = document.getElementById('app-global-loader');
   if (loader) loader.classList.add('loader-hidden');
@@ -61,17 +121,113 @@ function hideGlobalLoader() {
 
 const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 15));
 
+function getDistinctKey(row) {
+  if (!row) return '';
+  if (row._parsed?.distinctKey) return row._parsed.distinctKey;
+  const prov = cleanAllSpaces(row['จังหวัด'] || row.province);
+  const shipTo = cleanAllSpaces(row['Description(Ship-To (Outbound))'] || row.ship_to_desc) || prov;
+  return [
+    cleanAllSpaces(row['ต้นทาง'] || row.origin),
+    cleanAllSpaces(row['ลูกค้า'] || row.customer_name),
+    cleanAllSpaces(row['ประเภทลูกค้า'] || row.customer_type),
+    cleanAllSpaces(row['ประเภทสินค้า'] || row.product_category),
+    prov,
+    cleanAllSpaces(row['Zone'] || row.zone),
+    cleanAllSpaces(row['ประเภทรถ'] || row.truck_type),
+    shipTo
+  ]
+    .filter(Boolean)
+    .join('__');
+}
+
+function getMapRouteKey(row) {
+  if (!row) return '';
+  if (row._parsed?.mapRouteKey) return row._parsed.mapRouteKey;
+  const origin = cleanAllSpaces(row['ต้นทาง'] || row.origin);
+  const prov = cleanAllSpaces(row['จังหวัด'] || row.province);
+  let shipTo = cleanAllSpaces(row['Description(Ship-To (Outbound))'] || row.ship_to_desc);
+  if (!shipTo || shipTo === '-') shipTo = prov;
+  return `${origin}__${shipTo}`;
+}
+
+function getAvailColorScale(availPct) {
+  const val = parseFloat(availPct) || 0;
+  if (val === 0) return { text: 'text-slate-500 dark:text-slate-400 font-bold', hex: '#334155' };
+  if (val <= 30) return { text: 'text-rose-600 dark:text-rose-400 font-bold', hex: '#ef4444' };
+  if (val <= 70) return { text: 'text-amber-600 dark:text-amber-400 font-bold', hex: '#f59e0b' };
+  return { text: 'text-emerald-600 dark:text-emerald-400 font-black', hex: '#10b981' };
+}
+
+function precomputeRouteData(routes) {
+  if (!Array.isArray(routes) || routes.length === 0) return [];
+  return routes.map((row) => {
+    const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
+    const destProv = String(row.province || row['จังหวัด'] || '-').trim();
+    let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
+    if (!shipTo || shipTo === '-') shipTo = destProv;
+
+    const trips = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    const totalPct = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
+    const availPct = Math.max(0, 100 - totalPct);
+    const availTrips = trips * (availPct / 100);
+
+    const cleanOrigin = cleanAllSpaces(origin);
+    const cleanCustomer = cleanAllSpaces(row.customer_name || row['ลูกค้า'] || '-');
+    const cleanCustomerType = cleanAllSpaces(row.customer_type || row['ประเภทลูกค้า'] || '-');
+    const cleanProduct = cleanAllSpaces(row.product_category || row['ประเภทสินค้า'] || '-');
+    const cleanProv = cleanAllSpaces(destProv);
+    const cleanZone = cleanAllSpaces(row.zone || row['Zone'] || '-');
+    const cleanTruck = cleanAllSpaces(row.truck_type || row['ประเภทรถ'] || '-');
+    const cleanShipTo = cleanAllSpaces(shipTo);
+    const cleanCarrier = cleanAllSpaces(row.fwd_agent_desc || row['Description(FwdAgent)'] || '');
+
+    const distinctKey = [
+      cleanOrigin,
+      cleanCustomer,
+      cleanCustomerType,
+      cleanProduct,
+      cleanProv,
+      cleanZone,
+      cleanTruck,
+      cleanShipTo
+    ].join('__');
+    const mapRouteKey = `${cleanOrigin}__${cleanShipTo}`;
+    const searchIndex =
+      `${row.id || ''} ${origin} ${destProv} ${row.customer_name || ''} ${row.fwd_agent_desc || ''}`.toLowerCase();
+
+    return {
+      ...row,
+      _parsed: {
+        trips,
+        totalPct,
+        availPct,
+        availTrips,
+        cleanOrigin,
+        cleanCustomer,
+        cleanCustomerType,
+        cleanProduct,
+        cleanProv,
+        cleanZone,
+        cleanTruck,
+        cleanShipTo,
+        cleanCarrier,
+        distinctKey,
+        mapRouteKey,
+        searchIndex
+      }
+    };
+  });
+}
+
 // ==============================================================================
-// 3. APP INITIALIZATION (THE HEART OF THE DASHBOARD)
+// 4. APP INITIALIZATION
 // ==============================================================================
 window.initAppAfterLogin = async function () {
   console.log('[APP] 🚀 Starting Application Initialization...');
+  showGlobalLoader('กำลังโหลดโครงสร้างระบบ...');
 
-  const loginView = document.getElementById('auth-container');
-  const appContainer = document.getElementById('main-app-container') || document.getElementById('main-app');
-
-  if (loginView) loginView.classList.add('hidden');
-  if (appContainer) appContainer.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+  const app = document.getElementById('main-app');
+  if (app) app.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
 
   try {
     renderSidebarMenu();
@@ -81,11 +237,8 @@ window.initAppAfterLogin = async function () {
   }
 
   await yieldToMain();
-  window.updateView();
 
   try {
-    await initExecutiveDashboardFast().catch(console.error);
-
     const [provData, originData, routeData] = await Promise.all([
       fetchProvinceLocations().catch(() => ({})),
       fetchOriginLocations().catch(() => ({})),
@@ -94,84 +247,107 @@ window.initAppAfterLogin = async function () {
 
     window.provinceLocationMap = provData || {};
     window.originLocationMap = originData || {};
-    window.globalRouteSheetData = routeData;
 
+    showGlobalLoader('กำลังประมวลผลข้อมูลเส้นทาง...');
     await yieldToMain();
 
-    await window.applyDynamicFilters();
+    window.globalRouteSheetData = precomputeRouteData(Array.isArray(routeData) ? routeData : []);
+
+    await yieldToMain();
+    updateView();
+    populateDashboardFilters(window.globalRouteSheetData);
+    await applyDynamicFilters();
     await updateExecutiveDashboard(window.globalRouteSheetData);
 
     setTimeout(() => {
+      if (execMap) execMap.invalidateSize();
+      if (dashMap) dashMap.invalidateSize();
       hideGlobalLoader();
-    }, 200);
+    }, 300);
   } catch (err) {
     console.error('[APP] ❌ Data Fetch Error:', err);
     hideGlobalLoader();
   }
 };
 
-window.forceRefreshRouteData = async function () {
+async function forceRefreshRouteData() {
   window.showToast('กำลังดึงข้อมูลล่าสุดจากฐานข้อมูล...');
+  showGlobalLoader('กำลังรีเฟรชข้อมูล...');
   try {
     sessionStorage.removeItem('cache_routes_data');
     const routeData = await fetchNewRouteSheet();
-    window.globalRouteSheetData = routeData;
-    await window.applyDynamicFilters();
+    window.globalRouteSheetData = precomputeRouteData(Array.isArray(routeData) ? routeData : []);
+    populateDashboardFilters(window.globalRouteSheetData);
+    await applyDynamicFilters();
     if (window.state.activeMenuId === 'exec') await updateExecutiveDashboard(window.globalRouteSheetData);
-    window.showToast(`รีเฟรชสำเร็จ! ข้อมูล ${routeData.length.toLocaleString()} รายการ`);
+
+    setTimeout(() => {
+      hideGlobalLoader();
+    }, 300);
+    window.showToast(`รีเฟรชสำเร็จ! ข้อมูล ${window.globalRouteSheetData.length.toLocaleString()} รายการ`);
   } catch (err) {
+    hideGlobalLoader();
     window.showToast('เกิดข้อผิดพลาดในการโหลดข้อมูล');
   }
-};
+}
 
 // ==============================================================================
-// 4. VIEW & SIDEBAR CONTROLLERS (ซ่อน/แสดง หน้าต่าง)
+// 5. VIEW & SIDEBAR CONTROLLERS
 // ==============================================================================
-const VIEW_IDS = ['view-exec', 'view-dashboard', 'view-mapping', 'view-simulation'];
+function updateView() {
+  const execView = document.getElementById('view-exec');
+  const dashView = document.getElementById('view-dashboard');
+  const mapKeyView = document.getElementById('view-mapping');
 
-window.switchMenu = function (menuId) {
-  console.log(`[APP] 🔄 Switching to view: ${menuId}`);
-  window.state.activeMenuId = menuId;
-  window.updateView();
-};
+  if (execView) execView.style.display = window.state.activeMenuId === 'exec' ? 'flex' : 'none';
+  if (dashView) dashView.style.display = window.state.activeMenuId === 'dashboard' ? 'flex' : 'none';
+  if (mapKeyView) mapKeyView.style.display = window.state.activeMenuId === 'mapping' ? 'flex' : 'none';
 
-window.updateView = function () {
-  VIEW_IDS.forEach((viewId) => {
-    const el = document.getElementById(viewId);
-    if (el) {
-      if (viewId === `view-${window.state.activeMenuId}`) {
-        el.classList.remove('hidden');
-        el.style.display = 'flex';
-      } else {
-        el.classList.add('hidden');
-        el.style.display = 'none';
-      }
-    }
-  });
+  const menuHeaders = {
+    exec: { title: 'Executive Dashboard', subtitle: "Summarize route data for management's view" },
+    dashboard: { title: 'Route Dashboard', subtitle: 'Existing routes and available backhaul data' },
+    mapping: { title: 'New Order Mapping', subtitle: 'Simulate routes, match subcontractors & backhaul' }
+  };
+
+  const hTitle = document.getElementById('header-title');
+  const hSubtitle = document.getElementById('header-subtitle');
+  if (menuHeaders[window.state.activeMenuId]) {
+    if (hTitle) hTitle.innerText = menuHeaders[window.state.activeMenuId].title;
+    if (hSubtitle) hSubtitle.innerText = menuHeaders[window.state.activeMenuId].subtitle;
+  }
 
   renderSidebarMenu();
 
-  if (window.state.activeMenuId === 'mapping' && window.map) {
-    setTimeout(() => {
-      window.map.invalidateSize();
-    }, 100);
-  }
-};
+  setTimeout(() => {
+    if (window.state.activeMenuId === 'exec' && execMap) execMap.invalidateSize();
+    if (window.state.activeMenuId === 'dashboard' && dashMap) dashMap.invalidateSize();
+    if (window.state.activeMenuId === 'mapping') {
+      if (simMap) simMap.invalidateSize();
+      initNewOrderMappingDropdowns();
+    }
+  }, 300);
+}
+
+function switchMenu(id) {
+  window.state.activeMenuId = id;
+  updateView();
+}
 
 function renderSidebarMenu() {
   const menus = [
     { id: 'exec', icon: 'pie-chart', nameKey: 'Executive Dashboard' },
     { id: 'dashboard', icon: 'map', nameKey: 'Route Dashboard' },
-    { id: 'mapping', icon: 'navigation', nameKey: 'New Order Mapping' },
-    { id: 'simulation', icon: 'box', nameKey: 'Simulation Mode' }
+    { id: 'mapping', icon: 'navigation', nameKey: 'New Order Mapping' }
   ];
   const container = document.getElementById('menu-container');
   if (!container) return;
   container.innerHTML = menus
     .map(
       (m) => `
-    <button onclick="window.switchMenu('${m.id}')" class="w-full flex items-center px-3 h-11 gap-3 rounded-xl text-xs font-semibold transition-all ${window.state.activeMenuId === m.id ? 'bg-orange-500/10 text-orange-500' : 'text-slate-400'}">
-      <i data-lucide="${m.icon}" class="w-4.5 h-4.5"></i> <span>${m.nameKey}</span>
+    <button onclick="window.switchMenu('${m.id}')" class="w-full flex items-center ${window.state.isSidebarOpen ? 'px-3' : 'justify-center px-0'} h-11 gap-3 rounded-xl text-xs font-semibold transition-all duration-200 
+      ${window.state.activeMenuId === m.id ? 'bg-orange-500/10 text-orange-500 shadow-inner' : 'text-slate-400 hover:bg-slate-200 hover:text-slate-800 dark:hover:bg-zinc-800/50 dark:hover:text-slate-200'}">
+      <i data-lucide="${m.icon}" class="w-4.5 h-4.5 shrink-0 ${window.state.activeMenuId === m.id ? 'text-orange-500' : 'text-slate-400'}"></i>
+      ${window.state.isSidebarOpen ? `<span class="whitespace-nowrap">${m.nameKey}</span>` : ''}
     </button>
   `
     )
@@ -180,88 +356,1251 @@ function renderSidebarMenu() {
 }
 
 // ==============================================================================
-// 5. FILTERING & TABLE LOGIC
+// 6. EXECUTIVE DASHBOARD LOGIC (RESTORED)
 // ==============================================================================
-window.toggleCustomDropdown = function (dropdownId) {
+async function updateExecutiveDashboard(filteredData = []) {
+  const routeData = filteredData && filteredData.length > 0 ? filteredData : window.globalRouteSheetData;
+  populateExecProvinceMultiSelect(routeData);
+  updateExecNewOrderMappingSection(routeData);
+  updateExecAdvancedAnalytics(routeData);
+  if (typeof renderExecRouteHeatmap === 'function') {
+    renderExecRouteHeatmap(routeData);
+  }
+}
+
+function calculateExecAnalytics(routeData) {
+  const result = {
+    carrierTotalCount: routeData.length,
+    carrierUnavailableCount: 0,
+    carrierAvailableCount: 0,
+    totalTripsSum: 0,
+    unavailTripsSum: 0,
+    availTripsSum: 0,
+    distinctRouteMap: {},
+    zoneSummaryMap: {},
+    truckAvailMap: {},
+    carrierAvailMap: {},
+    allRoutesList: []
+  };
+
+  routeData.forEach((row) => {
+    const p = row._parsed;
+    const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
+    const province = String(row.province || row['จังหวัด'] || '-').trim();
+    let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
+    if (!shipTo || shipTo === '-') shipTo = province;
+    const zone = String(row.zone || row['Zone'] || '-').trim();
+    const truck = String(row.truck_type || row['ประเภทรถ'] || '-').trim();
+    const rawFwdAgent = String(row.fwd_agent_desc || row['Description(FwdAgent)'] || row['ผู้รับเหมา'] || '').trim();
+
+    const trips = p ? p.trips : parseNum(row.avg_trip_week, 0);
+    const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total, 0));
+    const rowActualAvailTrips = p ? p.availTrips : trips * (availPct / 100);
+
+    result.totalTripsSum += trips;
+    if (availPct === 0) {
+      result.carrierUnavailableCount++;
+      result.unavailTripsSum += trips;
+    } else {
+      result.carrierAvailableCount++;
+      result.availTripsSum += rowActualAvailTrips;
+    }
+
+    const distinctKey = p ? p.distinctKey : getDistinctKey(row);
+    if (!result.distinctRouteMap[distinctKey]) {
+      result.distinctRouteMap[distinctKey] = { hasAvailable: false, totalTrips: 0, availTrips: 0 };
+    }
+    result.distinctRouteMap[distinctKey].totalTrips += trips;
+    result.distinctRouteMap[distinctKey].availTrips += rowActualAvailTrips;
+    if (availPct > 0) result.distinctRouteMap[distinctKey].hasAvailable = true;
+
+    if (zone && zone !== '-') {
+      if (!result.zoneSummaryMap[zone])
+        result.zoneSummaryMap[zone] = { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 };
+      result.zoneSummaryMap[zone].totalRoutes++;
+      result.zoneSummaryMap[zone].totalTrips += trips;
+      if (availPct > 0) {
+        result.zoneSummaryMap[zone].availRoutes++;
+        result.zoneSummaryMap[zone].availTrips += rowActualAvailTrips;
+      }
+    }
+
+    if (truck && truck !== '-') {
+      if (!result.truckAvailMap[truck])
+        result.truckAvailMap[truck] = { totalRoutes: 0, availRoutes: 0, sumAvailPct: 0, totalTrips: 0, availTrips: 0 };
+      result.truckAvailMap[truck].totalRoutes++;
+      result.truckAvailMap[truck].totalTrips += trips;
+      result.truckAvailMap[truck].sumAvailPct += availPct;
+      if (availPct > 0) {
+        result.truckAvailMap[truck].availRoutes++;
+        result.truckAvailMap[truck].availTrips += rowActualAvailTrips;
+      }
+    }
+
+    if (rawFwdAgent && rawFwdAgent !== '-' && rawFwdAgent !== 'ไม่ระบุ') {
+      rawFwdAgent.split(/[,/|\n]+/).forEach((agent) => {
+        const clean = agent.trim();
+        if (clean && clean !== '-' && clean !== 'ไม่ระบุ') {
+          if (!result.carrierAvailMap[clean])
+            result.carrierAvailMap[clean] = { sumAvail: 0, count: 0, trips: 0, availTrips: 0 };
+          result.carrierAvailMap[clean].sumAvail += availPct;
+          result.carrierAvailMap[clean].count += 1;
+          result.carrierAvailMap[clean].trips += trips;
+          result.carrierAvailMap[clean].availTrips += rowActualAvailTrips;
+        }
+      });
+    }
+
+    result.allRoutesList.push({
+      routeStr: `${origin} &rarr; ${shipTo}`,
+      zone,
+      carrier: rawFwdAgent || '-',
+      trips,
+      availPct,
+      availTrips: rowActualAvailTrips
+    });
+  });
+
+  return result;
+}
+
+function updateExecAdvancedAnalytics(routeData) {
+  if (!routeData || routeData.length === 0) return;
+  const data = calculateExecAnalytics(routeData);
+  renderExecTopKPIs(data);
+  renderExecTruckAvailList(data.truckAvailMap);
+  renderExecCarrierCapacity(data.carrierAvailMap, data.allRoutesList);
+}
+
+function renderExecTopKPIs(data) {
+  const distinctTotalCount = Object.keys(data.distinctRouteMap).length;
+  const distinctAvailableCount = Object.values(data.distinctRouteMap).filter((r) => r.hasAvailable).length;
+  const distinctAvailPct =
+    distinctTotalCount > 0 ? ((distinctAvailableCount / distinctTotalCount) * 100).toFixed(1) : '0.0';
+
+  const distinctTotalTripsWk = Object.values(data.distinctRouteMap).reduce((sum, r) => sum + r.totalTrips, 0);
+  const distinctAvailTripsWk = Object.values(data.distinctRouteMap).reduce(
+    (sum, r) => sum + (r.hasAvailable ? r.availTrips : 0),
+    0
+  );
+
+  const carrierUnavailPct =
+    data.carrierTotalCount > 0 ? ((data.carrierUnavailableCount / data.carrierTotalCount) * 100).toFixed(1) : '0.0';
+  const carrierAvailPct =
+    data.carrierTotalCount > 0 ? ((data.carrierAvailableCount / data.carrierTotalCount) * 100).toFixed(1) : '0.0';
+
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = text;
+  };
+  const setHtml = (id, html) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  };
+
+  setText('kpi-distinct-total', distinctTotalCount.toLocaleString());
+  setText('kpi-distinct-avail-count', distinctAvailableCount.toLocaleString());
+  setText('kpi-distinct-avail-pct', `(${distinctAvailPct}%)`);
+  setHtml(
+    'kpi-distinct-total-trips',
+    `<div><strong class="text-slate-700 dark:text-slate-200">${Math.round(distinctTotalTripsWk).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-slate-400 font-normal">(~${(distinctTotalTripsWk / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day • 6 days)</div>`
+  );
+  setHtml(
+    'kpi-distinct-avail-trips',
+    `<div><strong class="text-emerald-700 dark:text-emerald-300">${Math.round(distinctAvailTripsWk).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-emerald-500 font-normal">(~${(distinctAvailTripsWk / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day • 6 days)</div>`
+  );
+
+  setText('kpi-carrier-total', data.carrierTotalCount.toLocaleString());
+  setText('kpi-carrier-unavail', data.carrierUnavailableCount.toLocaleString());
+  setText('kpi-carrier-unavail-pct', `(${carrierUnavailPct}%)`);
+  setText('kpi-carrier-avail', data.carrierAvailableCount.toLocaleString());
+  setText('kpi-carrier-avail-pct', `(${carrierAvailPct}%)`);
+  setHtml(
+    'kpi-carrier-total-trips',
+    `<div><strong class="text-slate-700 dark:text-slate-200">${Math.round(data.totalTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-slate-400 font-normal">(~${(data.totalTripsSum / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</div>`
+  );
+  setHtml(
+    'kpi-carrier-unavail-trips',
+    `<div><strong class="text-rose-700 dark:text-rose-300">${Math.round(data.unavailTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-rose-500 font-normal">(~${(data.unavailTripsSum / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</div>`
+  );
+  setHtml(
+    'kpi-carrier-avail-trips',
+    `<div><strong class="text-emerald-700 dark:text-emerald-300">${Math.round(data.availTripsSum).toLocaleString()}</strong> trips/wk</div><div class="text-[9px] text-emerald-500 font-normal">(~${(data.availTripsSum / WORKING_DAYS_PER_WEEK).toFixed(1)} trips/day)</div>`
+  );
+}
+
+function renderExecTruckAvailList(truckAvailMap) {
+  const truckListEl = document.getElementById('exec-truck-avail-list');
+  if (!truckListEl) return;
+
+  const sortedTrucks = Object.entries(truckAvailMap)
+    .map(([type, stat]) => ({
+      type,
+      totalRoutes: stat.totalRoutes,
+      availRoutes: stat.availRoutes,
+      totalTrips: stat.totalTrips,
+      availTrips: stat.availTrips,
+      availRatio: stat.totalRoutes > 0 ? (stat.availRoutes / stat.totalRoutes) * 100 : 0
+    }))
+    .sort((a, b) => b.availRoutes - a.availRoutes);
+
+  if (sortedTrucks.length === 0) {
+    truckListEl.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-slate-400 font-sans border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-zinc-900/50">ไม่พบข้อมูลประเภทรถสำหรับจังหวัดที่เลือก</div>`;
+    return;
+  }
+
+  truckListEl.innerHTML = sortedTrucks
+    .map((item) => {
+      const color = getAvailColorScale(item.availRatio);
+      const radius = 18,
+        circumference = 2 * Math.PI * radius;
+      const offset = circumference - (Math.min(item.availRatio, 100) / 100) * circumference;
+
+      return `
+      <div class="p-3.5 rounded-2xl bg-slate-50/70 dark:bg-zinc-950/70 border border-slate-200/80 dark:border-slate-800 hover:border-orange-500/60 hover:shadow-md transition-all flex flex-col justify-between space-y-3 font-sans">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <div class="w-8 h-8 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center text-orange-500 shadow-sm shrink-0"><i data-lucide="truck" class="w-4 h-4"></i></div>
+            <div class="truncate">
+              <h5 class="text-xs font-black text-slate-800 dark:text-white truncate" title="${escapeAttr(item.type)}">${escapeHtml(item.type)}</h5>
+              <span class="text-[10px] font-semibold text-slate-400">${item.totalRoutes.toLocaleString()} Routes</span>
+            </div>
+          </div>
+          <div class="relative w-11 h-11 shrink-0 flex items-center justify-center">
+            <svg class="w-full h-full -rotate-90" viewBox="0 0 44 44">
+              <circle cx="22" cy="22" r="${radius}" class="stroke-slate-200 dark:stroke-zinc-800" stroke-width="3.5" fill="none" />
+              <circle cx="22" cy="22" r="${radius}" stroke="${color.hex}" stroke-width="3.5" stroke-linecap="round" fill="none" style="stroke-dasharray: ${circumference}; stroke-dashoffset: ${offset}; transition: stroke-dashoffset 0.6s ease;" />
+            </svg>
+            <span class="absolute text-[9px] font-black text-slate-800 dark:text-white">${Math.round(item.availRatio)}%</span>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/80 text-[10px]">
+          <div class="bg-white/80 dark:bg-zinc-900/80 p-2 rounded-xl border border-slate-100 dark:border-slate-800">
+            <span class="text-slate-400 block text-[9px] font-medium">Available Routes</span><strong class="${color.text} text-xs font-black">${item.availRoutes.toLocaleString()}</strong>
+          </div>
+          <div class="bg-white/80 dark:bg-zinc-900/80 p-2 rounded-xl border border-slate-100 dark:border-slate-800 text-right">
+            <span class="text-slate-400 block text-[9px] font-medium">Available Volume</span>
+            <strong class="text-slate-800 dark:text-slate-200 text-xs font-black">${Math.round(item.availTrips).toLocaleString()} <span class="text-[9px] text-slate-400 font-normal">trips/wk</span></strong>
+          </div>
+        </div>
+      </div>
+    `;
+    })
+    .join('');
+  if (typeof window.lucide !== 'undefined') window.lucide.createIcons({ root: truckListEl });
+}
+
+function renderExecCarrierCapacity(carrierAvailMap, allRoutesList) {
+  const availCapCountEl = document.getElementById('exec-avail-cap-count');
+
+  window.drawCarrierCardElements = function (carriers) {
+    const listEl = document.getElementById('exec-avail-cap-list');
+    if (!listEl) return;
+    if (!carriers || carriers.length === 0) {
+      listEl.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-slate-400 font-sans">No carrier matching your criteria</div>`;
+      return;
+    }
+
+    listEl.innerHTML = carriers
+      .map((item) => {
+        const color = getAvailColorScale(item.avgAvail);
+        return `
+        <div class="carrier-item-card p-3 rounded-2xl bg-slate-50/80 dark:bg-zinc-950/70 border border-slate-200/80 dark:border-slate-800 hover:border-emerald-500 hover:shadow-md transition-all flex flex-col justify-between space-y-2.5 font-sans">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0"><span class="font-extrabold text-xs text-slate-800 dark:text-slate-100 block truncate" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</span><span class="text-[10px] text-slate-400 font-medium">${item.count.toLocaleString()} routes registered</span></div>
+            <div class="text-right shrink-0"><span class="text-xs font-black ${color.text} block">${item.avgAvail}%</span><span class="text-[9px] text-slate-400 uppercase tracking-wider">Available</span></div>
+          </div>
+          <div class="w-full bg-slate-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden"><div class="h-full rounded-full transition-all duration-500" style="width: ${Math.min(item.avgAvail, 100)}%; background-color: ${color.hex};"></div></div>
+          <div class="flex items-center justify-between text-[10px] pt-1 border-t border-slate-200/50 dark:border-slate-800/80 text-slate-400">
+            <span class="font-medium">Available Volume</span><strong class="text-slate-700 dark:text-slate-300 font-bold">~${Math.round(item.availTrips).toLocaleString()} /wk</strong>
+          </div>
+        </div>
+      `;
+      })
+      .join('');
+    if (typeof window.lucide !== 'undefined') window.lucide.createIcons({ root: listEl });
+  };
+
+  const sortedCarrierAvail = Object.entries(carrierAvailMap)
+    .map(([name, stat]) => ({
+      name,
+      count: stat.count,
+      trips: stat.trips,
+      availTrips: stat.availTrips,
+      avgAvail: Math.round(stat.sumAvail / stat.count)
+    }))
+    .sort((a, b) => (b.avgAvail !== a.avgAvail ? b.avgAvail - a.avgAvail : b.count - a.count));
+
+  window.execCarrierListCache = sortedCarrierAvail;
+  if (availCapCountEl) availCapCountEl.innerText = `${sortedCarrierAvail.length.toLocaleString()} Carriers`;
+
+  const searchInput = document.getElementById('input-search-carrier');
+  if (searchInput && searchInput.value.trim() !== '') filterCarrierCardList(searchInput.value);
+  else window.drawCarrierCardElements(sortedCarrierAvail);
+
+  window.execAllRoutesCache = allRoutesList;
+}
+
+function updateExecNewOrderMappingSection(sourceData) {
+  const container = document.getElementById('exec-region-summary-list');
+  if (!container || !sourceData || sourceData.length === 0) {
+    if (container)
+      container.innerHTML = `<div class="p-6 text-center text-xs text-slate-400 font-sans col-span-full">No active routes found</div>`;
+    return;
+  }
+
+  const zoneStats = {};
+  sourceData.forEach((row) => {
+    const p = row._parsed;
+    const zoneName = String(row.zone || row['Zone'] || '').trim();
+    if (zoneName && zoneName !== 'undefined' && zoneName !== '-' && zoneName !== 'null') {
+      const trips = p ? p.trips : parseNum(row.avg_trip_week, 0);
+      const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total, 0));
+      const availTrips = p ? p.availTrips : trips * (availPct / 100);
+
+      if (!zoneStats[zoneName]) zoneStats[zoneName] = { totalRoutes: 0, availRoutes: 0, totalTrips: 0, availTrips: 0 };
+      zoneStats[zoneName].totalRoutes += 1;
+      zoneStats[zoneName].totalTrips += trips;
+      if (availPct > 0) {
+        zoneStats[zoneName].availRoutes += 1;
+        zoneStats[zoneName].availTrips += availTrips;
+      }
+    }
+  });
+
+  const sortedZones = Object.entries(zoneStats)
+    .map(([zoneName, stat]) => ({
+      zoneName,
+      totalRoutes: stat.totalRoutes,
+      availRoutes: stat.availRoutes,
+      totalTrips: stat.totalTrips,
+      availTrips: stat.availTrips,
+      zoneAvailPct: stat.totalRoutes > 0 ? (stat.availRoutes / stat.totalRoutes) * 100 : 0
+    }))
+    .sort((a, b) =>
+      b.zoneAvailPct !== a.zoneAvailPct ? b.zoneAvailPct - a.zoneAvailPct : b.availRoutes - a.availRoutes
+    );
+
+  if (sortedZones.length === 0) {
+    container.innerHTML = `<div class="p-6 text-center text-xs text-slate-400 font-sans col-span-full">No active routes for selected filter</div>`;
+    return;
+  }
+
+  container.innerHTML = sortedZones
+    .map(
+      (item) => `
+    <div onclick="window.selectExecZoneCard('${escapeAttr(item.zoneName)}', this)" class="p-3.5 rounded-2xl bg-white dark:bg-zinc-950 border border-slate-200/90 dark:border-slate-800 hover:border-orange-500 cursor-pointer transition-all flex items-center justify-between font-sans shadow-sm hover:scale-[1.01]">
+      <div>
+        <h5 class="text-xs font-extrabold text-slate-800 dark:text-white">${escapeHtml(item.zoneName)}</h5>
+        <p class="text-[10px] text-slate-400 mt-0.5">${item.totalRoutes.toLocaleString()} routes (${Math.round(item.totalTrips).toLocaleString()} trips/wk)</p>
+      </div>
+      <div class="text-right">
+        <div class="text-xs font-black text-emerald-600 dark:text-emerald-400">${item.availRoutes.toLocaleString()} routes <span class="text-[10px]">(${item.zoneAvailPct.toFixed(2)}%)</span></div>
+        <p class="text-[10px] text-slate-400 mt-0.5">~${Math.round(item.availTrips).toLocaleString()} trips/wk</p>
+      </div>
+    </div>
+  `
+    )
+    .join('');
+}
+
+function selectExecZoneCard(zoneName, cardEl) {
+  const isAlreadyActive = cardEl && cardEl.classList.contains('ring-orange-500');
+  if (isAlreadyActive) {
+    closeExecZoneDetailTable();
+    return;
+  }
+
+  window.currentSelectedZone = cleanAllSpaces(zoneName);
+
+  document.querySelectorAll('#exec-region-summary-list > div').forEach((card) => {
+    card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
+    card.classList.add('border-slate-200/90', 'dark:border-slate-800');
+  });
+
+  if (cardEl) {
+    cardEl.classList.remove('border-slate-200/90', 'dark:border-slate-800');
+    cardEl.classList.add('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
+  }
+
+  highlightRegionOnExecMap(zoneName);
+  showExecZoneDetailsTable(zoneName);
+
+  const filteredRoutes = getExecFilteredRoutes();
+  updateExecAdvancedAnalytics(filteredRoutes);
+}
+
+function closeExecZoneDetailTable() {
+  window.currentSelectedZone = null;
+  const panel = document.getElementById('exec-zone-detail-panel');
+  if (panel) {
+    panel.classList.add('hidden');
+    panel.style.display = 'none';
+  }
+  document.querySelectorAll('#exec-region-summary-list > div').forEach((card) => {
+    card.classList.remove('ring-2', 'ring-orange-500', 'border-orange-500', 'shadow-md');
+    card.classList.add('border-slate-200/90', 'dark:border-slate-800');
+  });
+  resetExecMapHighlight();
+  const filteredRoutes = getExecFilteredRoutes();
+  updateExecAdvancedAnalytics(filteredRoutes);
+}
+
+function getExecFilteredRoutes() {
+  let allRoutes = window.globalRouteSheetData || [];
+  const selectedProvinces = getMultiSelectValues('exec-province');
+  const isAllProv = selectedProvinces.includes('all') || selectedProvinces.length === 0;
+
+  return allRoutes.filter((row) => {
+    const p = row._parsed ? row._parsed.cleanProv : cleanAllSpaces(row.province);
+    const matchProv = isAllProv || selectedProvinces.some((sel) => p === sel || p.includes(sel) || sel.includes(p));
+    let matchZone = true;
+    if (window.currentSelectedZone) {
+      const z = row._parsed ? row._parsed.cleanZone : cleanAllSpaces(row.zone);
+      matchZone =
+        z === window.currentSelectedZone ||
+        z.includes(window.currentSelectedZone) ||
+        window.currentSelectedZone.includes(z);
+    }
+    return matchProv && matchZone;
+  });
+}
+
+function showExecZoneDetailsTable(zoneName) {
+  const panel = document.getElementById('exec-zone-detail-panel');
+  const tbody = document.getElementById('exec-zone-table-body');
+  if (!panel || !tbody) return;
+
+  const matchedRoutes = getExecFilteredRoutes();
+
+  matchedRoutes.sort((a, b) => {
+    const availA = a._parsed?.availPct ?? Math.max(0, 100 - parseNum(a.pct_total));
+    const availB = b._parsed?.availPct ?? Math.max(0, 100 - parseNum(b.pct_total));
+    if (availB !== availA) return availB - availA;
+    const tripsA = a._parsed?.trips ?? parseNum(a.avg_trip_week);
+    const tripsB = b._parsed?.trips ?? parseNum(b.avg_trip_week);
+    return tripsB - tripsA;
+  });
+
+  const titleEl = document.getElementById('exec-selected-zone-name');
+  const badgeEl = document.getElementById('exec-selected-zone-badge');
+  if (titleEl) titleEl.innerText = zoneName;
+  if (badgeEl) badgeEl.innerText = `${matchedRoutes.length.toLocaleString()} Routes`;
+
+  if (matchedRoutes.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-slate-400 font-sans">ไม่พบข้อมูลเส้นทางในโซน ${escapeHtml(zoneName)}</td></tr>`;
+  } else {
+    tbody.innerHTML = matchedRoutes
+      .map((row) => {
+        const p = row._parsed;
+        const origin = row.origin || '-';
+        const customer = row.customer_name || '-';
+        const shipToDesc = row.ship_to_desc || row.province || '-';
+        const avgTrip = p ? p.trips : parseNum(row.avg_trip_week);
+        const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total));
+        const color = getAvailColorScale(availPct);
+
+        return `
+        <tr class="hover:bg-slate-100/60 dark:hover:bg-zinc-900/60 transition-colors font-sans border-b border-slate-100 dark:border-slate-800/60 text-xs">
+          <td class="p-2.5 font-bold text-slate-800 dark:text-slate-200">${escapeHtml(origin)}</td>
+          <td class="p-2.5 max-w-[220px]"><strong class="block truncate">${escapeHtml(customer)}</strong><span class="text-[10px] text-slate-400 block truncate">${escapeHtml(shipToDesc)}</span></td>
+          <td class="p-2.5 font-medium">${escapeHtml(row.province || '-')}</td>
+          <td class="p-2.5 text-slate-500">${escapeHtml(row.product_category || '-')}</td>
+          <td class="p-2.5 text-slate-500">${escapeHtml(row.truck_type || '-')}</td>
+          <td class="p-2.5 font-semibold text-orange-600 dark:text-orange-400">${escapeHtml(row.fwd_agent_desc || 'ไม่ระบุ')}</td>
+          <td class="p-2.5 text-center font-Sarabun font-bold">${formatNum(avgTrip)}</td>
+          <td class="p-2.5 text-right font-Sarabun font-bold ${color.text}">${Math.round(availPct)}%</td>
+        </tr>
+      `;
+      })
+      .join('');
+  }
+
+  panel.classList.remove('hidden');
+  panel.style.display = 'block';
+  if (typeof window.lucide !== 'undefined') window.lucide.createIcons({ root: panel });
+}
+
+function filterCarrierCardList(keyword) {
+  const key = (keyword || '').trim().toLowerCase();
+  const allList = window.execCarrierListCache || [];
+  if (typeof window.drawCarrierCardElements === 'function') {
+    window.drawCarrierCardElements(!key ? allList : allList.filter((item) => item.name.toLowerCase().includes(key)));
+  }
+}
+
+// ==============================================================================
+// 7. ROUTE DASHBOARD & FILTERING LOGIC
+// ==============================================================================
+function getMultiSelectValues(filterId) {
+  const checkboxes = document.querySelectorAll(`.checkbox-${filterId}`);
+  if (!checkboxes || checkboxes.length === 0) return ['all'];
+  const selected = Array.from(checkboxes)
+    .filter((cb) => cb.checked)
+    .map((cb) => cleanAllSpaces(cb.value));
+  return selected.length === 0 || selected.includes('all') ? ['all'] : selected;
+}
+
+function updateFilterLabel(filterId, defaultLabel = 'All') {
+  const checkboxes = document.querySelectorAll(`.checkbox-${filterId}`);
+  const labelEl = document.getElementById(`label-${filterId}`);
+  if (!labelEl) return;
+
+  const selected = Array.from(checkboxes)
+    .filter((cb) => cb.checked && cb.value !== 'ALL')
+    .map((cb) => cb.value);
+  if (selected.length === 0) {
+    labelEl.innerText = defaultLabel;
+    labelEl.className = 'truncate text-slate-500 dark:text-slate-400 font-normal';
+  } else if (selected.length === 1) {
+    labelEl.innerText = selected[0];
+    labelEl.className = 'truncate text-slate-800 dark:text-slate-200 font-bold';
+  } else {
+    labelEl.innerText = `${selected.length} Selected`;
+    labelEl.className =
+      'truncate text-orange-600 dark:text-orange-400 font-bold bg-orange-100 dark:bg-orange-500/20 px-2 py-0.5 rounded-md';
+  }
+}
+
+function toggleCustomDropdown(dropdownId) {
   document.querySelectorAll('.custom-select-dropdown').forEach((el) => {
     if (el.id !== dropdownId) el.classList.add('hidden');
   });
   document.getElementById(dropdownId)?.classList.toggle('hidden');
-};
-
-window.applyDynamicFilters = async function () {
-  console.log('[APP] 📊 Applying Filters...');
-  let filteredData = window.globalRouteSheetData || [];
-  window.currentFilteredData = filteredData;
-  if (typeof updateMapDisplay === 'function') updateMapDisplay(filteredData);
-};
-
-window.resetMapFilters = function () {
-  window.showToast('Filters cleared');
-  window.applyDynamicFilters();
-};
-
-window.filterTableByOrigin = function (originName) {
-  window.showToast(`Filtering by ${originName}`);
-};
-
-window.focusTableRowByMapKey = function (mapKey) {
-  window.showToast(`Focusing ${mapKey}`);
-};
-
-window.exportFilteredDataToCSV = function () {
-  window.showToast('Export triggered');
-};
-
-// ==============================================================================
-// 6. EXECUTIVE DASHBOARD & OTHERS
-// ==============================================================================
-async function updateExecutiveDashboard(data) {
-  if (typeof renderExecRouteHeatmap === 'function') renderExecRouteHeatmap(data);
 }
 
-window.selectExecZoneCard = function (zoneName, _cardEl) {
-  if (typeof highlightRegionOnExecMap === 'function') highlightRegionOnExecMap(zoneName);
-};
+function filterDropdownList(filterId, keyword) {
+  const container = document.getElementById(`list-${filterId}`);
+  if (!container) return;
+  const items = container.querySelectorAll('.dropdown-item');
+  const searchKey = keyword.trim().toLowerCase();
+  items.forEach((item) => {
+    const isAllOption = item.querySelector('input')?.value === 'ALL';
+    const text = item.innerText.toLowerCase();
+    item.style.display = isAllOption || text.includes(searchKey) ? 'flex' : 'none';
+  });
+}
 
-window.closeExecZoneDetailTable = function () {
-  if (typeof resetExecMapHighlight === 'function') resetExecMapHighlight();
-};
+function handleCheckboxChange(filterId, value) {
+  const checkboxes = document.querySelectorAll(`.checkbox-${filterId}`);
+  const allCheckbox = Array.from(checkboxes).find((cb) => cb.value === 'ALL');
 
-window.analyzeNewOrderMapping = function () {
-  window.showToast('Analyzing Mapping...');
-};
+  if (value === 'ALL') {
+    if (allCheckbox?.checked) {
+      checkboxes.forEach((cb) => {
+        if (cb.value !== 'ALL') cb.checked = false;
+      });
+    } else if (allCheckbox) {
+      allCheckbox.checked = true;
+    }
+  } else {
+    const anyChecked = Array.from(checkboxes).some((cb) => cb.value !== 'ALL' && cb.checked);
+    if (allCheckbox) allCheckbox.checked = !anyChecked;
+  }
 
-window.backToSimInput = function () {
-  window.showToast('Back to Input');
-};
+  updateFilterLabel(filterId, filterId === 'exec-province' ? 'All Provinces' : 'All');
+  if (filterId === 'exec-province') {
+    const filteredRoutes = getExecFilteredRoutes();
+    updateExecNewOrderMappingSection(filteredRoutes);
+    updateExecAdvancedAnalytics(filteredRoutes);
+    renderExecRouteHeatmap(filteredRoutes);
+  } else {
+    applyDynamicFilters();
+  }
+}
 
-window.filterCarrierCardList = function (keyword) {
-  console.log('Filtering carriers by:', keyword);
-};
+function populateExecProvinceMultiSelect(routeData) {
+  const container = document.getElementById('dropdown-exec-province');
+  if (!container || !routeData || routeData.length === 0) return;
+  const provinces = [...new Set(routeData.map((r) => String(r.province || '').trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, 'th')
+  );
+  let html = `
+    <div class="p-1 mb-1 border-b sticky top-0 bg-white dark:bg-zinc-900 z-10 font-sans">
+      <div class="relative"><i data-lucide="search" class="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"></i><input type="text" placeholder="Search All Provinces..." oninput="filterDropdownList('exec-province', this.value)" onclick="event.stopPropagation()" class="w-full pl-7 pr-2 py-1 rounded-lg text-[11px] border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-zinc-950 text-slate-800 dark:text-slate-200 outline-none focus:border-orange-500"></div>
+    </div>
+    <div id="list-exec-province" class="max-h-44 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-0.5 font-sans">
+      <label class="dropdown-item flex items-center gap-2.5 px-2.5 py-1.5 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg cursor-pointer transition-colors group">
+        <input type="checkbox" value="ALL" class="checkbox-exec-province w-3.5 h-3.5 rounded border-slate-300 accent-[#f97316] focus:ring-[#f97316] transition-all cursor-pointer" checked onchange="window.handleCheckboxChange('exec-province', 'ALL')">
+        <span class="text-xs font-bold">All Provinces</span>
+      </label>
+  `;
+  html += provinces
+    .map(
+      (prov) =>
+        `<label class="dropdown-item flex items-center gap-2.5 px-2.5 py-1.5 hover:bg-slate-50 dark:hover:bg-zinc-800/50 rounded-lg cursor-pointer transition-colors group"><input type="checkbox" value="${escapeAttr(prov)}" class="checkbox-exec-province w-3.5 h-3.5 rounded border-slate-300 accent-[#f97316] focus:ring-[#f97316]" onchange="window.handleCheckboxChange('exec-province', '${escapeAttr(prov)}')"><span class="text-xs truncate">${escapeHtml(prov)}</span></label>`
+    )
+    .join('');
+  html += `</div>`;
+  container.innerHTML = html;
+  updateFilterLabel('exec-province', 'All Provinces');
+  if (typeof window.lucide !== 'undefined') window.lucide.createIcons({ root: container });
+}
+
+function populateDashboardFilters(data) {
+  if (!data || data.length === 0) return;
+  const getUniqueValues = (keyEN) => {
+    const set = new Set();
+    data.forEach((row) => {
+      const val = String(row[keyEN] || '').trim();
+      if (val && val !== 'undefined' && val !== '-') set.add(val);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'th'));
+  };
+
+  const updateSelectOptions = (filterId, options, defaultLabel = 'All') => {
+    const container = document.getElementById(`dropdown-${filterId}`);
+    if (!container) return;
+    let html = `
+      <div class="p-1 mb-1 border-b sticky top-0 bg-white dark:bg-zinc-900 z-10"><div class="relative"><i data-lucide="search" class="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"></i><input type="text" placeholder="Search ${defaultLabel}..." oninput="window.filterDropdownList('${filterId}', this.value)" onclick="event.stopPropagation()" class="w-full pl-7 pr-2 py-1 rounded-lg text-[11px] border outline-none focus:border-orange-500 bg-slate-50 dark:bg-zinc-950 dark:border-slate-700"></div></div>
+      <div id="list-${filterId}" class="max-h-44 overflow-y-auto custom-scrollbar flex flex-col gap-0.5"><label class="dropdown-item flex items-center gap-2.5 px-2.5 py-1.5 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg cursor-pointer"><input type="checkbox" value="ALL" class="checkbox-${filterId} w-3.5 h-3.5 rounded border-slate-300 accent-[#f97316]" checked onchange="window.handleCheckboxChange('${filterId}', 'ALL')"><span class="text-xs font-bold">${defaultLabel}</span></label>
+    `;
+    html += options
+      .map(
+        (opt) =>
+          `<label class="dropdown-item flex items-center gap-2.5 px-2.5 py-1.5 hover:bg-slate-50 dark:hover:bg-zinc-800/50 rounded-lg cursor-pointer"><input type="checkbox" value="${escapeAttr(opt)}" class="checkbox-${filterId} w-3.5 h-3.5 rounded border-slate-300 accent-[#f97316]" onchange="window.handleCheckboxChange('${filterId}', '${escapeAttr(opt)}')"><span class="text-xs truncate">${escapeHtml(opt)}</span></label>`
+      )
+      .join('');
+    html += `</div>`;
+    container.innerHTML = html;
+    updateFilterLabel(filterId, defaultLabel);
+    if (typeof window.lucide !== 'undefined') window.lucide.createIcons({ root: container });
+  };
+
+  const originLocations = Object.values(window.originLocationMap || {});
+  const uniqueOriginZones = [...new Set(originLocations.map((l) => l.zone).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, 'th')
+  );
+
+  updateSelectOptions('filter-origin-zone', uniqueOriginZones, 'All Origin Zones');
+  updateSelectOptions('filter-origin-dc', getUniqueValues('origin'), 'All Origin DCs');
+  updateSelectOptions('filter-carrier', getUniqueValues('fwd_agent_desc'), 'All Carriers');
+  updateSelectOptions('filter-truck-type', getUniqueValues('truck_type'), 'All Truck Types');
+  updateSelectOptions('filter-dest-region', getUniqueValues('zone'), 'All Zones');
+  updateSelectOptions('filter-dest-province', getUniqueValues('province'), 'All Provinces');
+  updateSelectOptions('filter-customer-type', getUniqueValues('customer_type'), 'All Types');
+  updateSelectOptions('filter-customer-name', getUniqueValues('customer_name'), 'All Customers');
+  updateSelectOptions('filter-shipto-desc', getUniqueValues('ship_to_desc'), 'All Locations');
+  updateSelectOptions('filter-product-cat', getUniqueValues('product_category'), 'All Categories');
+}
+
+async function applyDynamicFilters() {
+  if (!window.globalRouteSheetData || window.globalRouteSheetData.length === 0) return;
+
+  const searchKeyword = (document.querySelector('#filters-content input[type="text"]')?.value || '')
+    .trim()
+    .toLowerCase();
+  const selCarriers = getMultiSelectValues('filter-carrier');
+  const selTruckTypes = getMultiSelectValues('filter-truck-type');
+  const selOriginDCs = getMultiSelectValues('filter-origin-dc');
+  const selOriginZones = getMultiSelectValues('filter-origin-zone');
+  const selDestRegions = getMultiSelectValues('filter-dest-region');
+  const selDestProvinces = getMultiSelectValues('filter-dest-province');
+  const selCustomerTypes = getMultiSelectValues('filter-customer-type');
+  const selCustomerNames = getMultiSelectValues('filter-customer-name');
+  const selShipToDescs = getMultiSelectValues('filter-shipto-desc');
+  const selProducts = getMultiSelectValues('filter-product-cat');
+
+  const minBackhaul = parseFloat(document.getElementById('filter-backhaul-min')?.value) || 0;
+  const maxBackhaul = parseFloat(document.getElementById('filter-backhaul-max')?.value) || 100;
+  const minAvailTrips = parseFloat(document.getElementById('filter-min-avail-trips')?.value) || 0;
+  const heatMetric = document.getElementById('filter-heat-metric')?.value || 'all';
+
+  const isAll = (arr) => arr.includes('all') || arr.length === 0;
+  const matchCriteria = (selectedList, cleanVal) => {
+    if (isAll(selectedList)) return true;
+    return selectedList.some((val) => val !== 'all' && (cleanVal.includes(val) || val.includes(cleanVal)));
+  };
+
+  const hasOriginZoneFilter = !isAll(selOriginZones);
+
+  const filteredData = window.globalRouteSheetData.filter((row) => {
+    const p = row._parsed;
+    if (!p) return false;
+    if (p.availPct < minBackhaul || p.availPct > maxBackhaul) return false;
+    if (p.availTrips < minAvailTrips) return false;
+    if (heatMetric === 'quota' && p.availPct <= 0) return false;
+
+    if (!matchCriteria(selCarriers, p.cleanCarrier)) return false;
+    if (!matchCriteria(selTruckTypes, p.cleanTruck)) return false;
+    if (!matchCriteria(selOriginDCs, p.cleanOrigin)) return false;
+    if (!matchCriteria(selDestRegions, p.cleanZone)) return false;
+    if (!matchCriteria(selDestProvinces, p.cleanProv)) return false;
+    if (!matchCriteria(selCustomerTypes, p.cleanCustomerType)) return false;
+    if (!matchCriteria(selCustomerNames, p.cleanCustomer)) return false;
+    if (!matchCriteria(selShipToDescs, p.cleanShipTo)) return false;
+    if (!matchCriteria(selProducts, p.cleanProduct)) return false;
+
+    if (hasOriginZoneFilter) {
+      const originInfo = window.originLocationMap ? window.originLocationMap[p.cleanOrigin] : null;
+      if (hasOriginZoneFilter && !matchCriteria(selOriginZones, cleanAllSpaces(originInfo?.zone))) return false;
+    }
+
+    if (searchKeyword && !p.searchIndex.includes(searchKeyword)) return false;
+    return true;
+  });
+
+  window.currentFilteredData = filteredData;
+  currentPage = 1;
+  renderTable(filteredData);
+
+  clearTimeout(mapRenderDebounceTimer);
+  mapRenderDebounceTimer = setTimeout(() => {
+    if (window.state.activeMenuId === 'dashboard') updateMapDisplay(filteredData);
+  }, 250);
+}
+
+function resetMapFilters() {
+  const searchInput = document.querySelector('#filters-content input[type="text"]');
+  if (searchInput) searchInput.value = '';
+
+  const filterIds = [
+    'filter-carrier',
+    'filter-truck-type',
+    'filter-origin-zone',
+    'filter-origin-dc',
+    'filter-dest-region',
+    'filter-dest-province',
+    'filter-customer-type',
+    'filter-customer-name',
+    'filter-shipto-desc',
+    'filter-product-cat'
+  ];
+  filterIds.forEach((id) => {
+    const checkboxes = document.querySelectorAll(`.checkbox-${id}`);
+    checkboxes.forEach((cb) => {
+      cb.checked = cb.value === 'ALL';
+    });
+    updateFilterLabel(id);
+  });
+
+  const minInput = document.getElementById('filter-backhaul-min');
+  const maxInput = document.getElementById('filter-backhaul-max');
+  const minTripsInput = document.getElementById('filter-min-avail-trips');
+  if (minInput) minInput.value = '';
+  if (maxInput) maxInput.value = '';
+  if (minTripsInput) minTripsInput.value = '';
+
+  const metricEl = document.getElementById('filter-heat-metric');
+  if (metricEl) metricEl.value = 'quota';
+
+  window.state.activeFilters.heatMetric = 'quota';
+  window.state.activeFilters.displayMode = 'routes';
+
+  document.querySelectorAll('#display-mode-segmented .mode-btn').forEach((btn) => {
+    const mode = btn.getAttribute('data-mode');
+    btn.className =
+      mode === 'routes'
+        ? 'mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-[#f97316] text-white shadow-sm'
+        : 'mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-zinc-700/50';
+  });
+
+  window.showToast('Filters cleared');
+  applyDynamicFilters();
+}
+
+function groupRouteData(filteredData = []) {
+  const groupedRoutes = {};
+  filteredData.forEach((row) => {
+    const p = row._parsed;
+    if (!p) return;
+    const routeKey = p.distinctKey;
+
+    if (!groupedRoutes[routeKey]) {
+      groupedRoutes[routeKey] = {
+        id: 'grp-' + Math.random().toString(36).substring(2, 11),
+        origin: row.origin || '-',
+        zone: row.zone || '-',
+        province: row.province || '-',
+        customerName: row.customer_name || '-',
+        customerType: row.customer_type || '-',
+        shipToDesc: row.ship_to_desc || row.province || '-',
+        productCat: row.product_category || '-',
+        truckType: row.truck_type || '-',
+        mapRouteKey: p.mapRouteKey,
+        uniqueSubcons: new Set(),
+        totalTrips: 0,
+        totalAvailTrips: 0,
+        sumPct: 0,
+        availablePct: 0,
+        vendors: []
+      };
+    }
+
+    if (p.cleanCarrier && p.cleanCarrier !== '-') {
+      groupedRoutes[routeKey].uniqueSubcons.add(row.fwd_agent_desc);
+    }
+
+    groupedRoutes[routeKey].totalTrips += p.trips;
+    groupedRoutes[routeKey].totalAvailTrips += p.availTrips;
+    groupedRoutes[routeKey].sumPct += p.totalPct;
+    groupedRoutes[routeKey].vendors.push(row);
+  });
+
+  Object.values(groupedRoutes).forEach((grp) => {
+    const count = grp.vendors.length;
+    grp.availablePct = Math.max(0, Math.round(100 - (count > 0 ? grp.sumPct / count : 0)));
+    grp.vendors.sort((a, b) => b._parsed.availPct - a._parsed.availPct);
+  });
+
+  return groupedRoutes;
+}
+
+function renderTable(filteredData = []) {
+  const tbody = document.getElementById('table-body');
+  if (!tbody) return;
+  const groupedRoutes = groupRouteData(filteredData);
+  const routeKeys = Object.keys(groupedRoutes);
+
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = text;
+  };
+
+  if (routeKeys.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-500 font-sans">ไม่พบข้อมูล Route ตามเงื่อนไขตัวกรอง</td></tr>`;
+    setText('ops-count', '0');
+    setText('ops-avail-groups', '0');
+    setText('ops-unavail-groups', '0');
+    setText('ops-avail-pct', '0.0%');
+    setText('ops-total-volume', '0');
+    setText('ops-avail-volume', '0');
+    document.getElementById('table-pagination').innerHTML = '';
+    return;
+  }
+
+  let totalTripsSum = 0,
+    totalAvailTripsSum = 0,
+    availRouteGroupsCount = 0,
+    unavailRouteGroupsCount = 0;
+  routeKeys.forEach((key) => {
+    const grp = groupedRoutes[key];
+    totalTripsSum += grp.totalTrips;
+    totalAvailTripsSum += grp.totalAvailTrips;
+    if (grp.availablePct > 0) availRouteGroupsCount++;
+    else unavailRouteGroupsCount++;
+  });
+
+  const availPct = ((availRouteGroupsCount / routeKeys.length) * 100).toFixed(1);
+
+  routeKeys.sort((a, b) => {
+    const routeA = groupedRoutes[a];
+    const routeB = groupedRoutes[b];
+    if (routeB.totalTrips !== routeA.totalTrips) return routeB.totalTrips - routeA.totalTrips;
+    return String(a).localeCompare(String(b), 'th');
+  });
+
+  window.currentGroupKeys = routeKeys;
+  window.currentGroupMap = groupedRoutes;
+
+  setText('ops-count', routeKeys.length.toLocaleString());
+  setText('ops-avail-groups', availRouteGroupsCount.toLocaleString());
+  setText('ops-unavail-groups', unavailRouteGroupsCount.toLocaleString());
+  setText('ops-avail-pct', `${availPct}%`);
+  setText('ops-total-volume', Math.round(totalTripsSum).toLocaleString());
+  setText('ops-avail-volume', formatNum(totalAvailTripsSum, 1));
+
+  const columns = [
+    '',
+    'Route',
+    'Customer (Type) & Item (Type)',
+    'Truck (Type)',
+    'Carriers',
+    'Sum Trip/Week',
+    'Available Backhaul'
+  ];
+  document.getElementById('table-head').innerHTML =
+    `<tr class="text-[10px] uppercase tracking-wider border-b text-slate-500 border-slate-200 dark:text-slate-400 dark:border-slate-700 bg-slate-50/60 dark:bg-zinc-900/60 font-sans">${columns.map((col, i) => `<th class="p-3 font-bold ${i === 0 ? 'w-10 text-center' : ''}">${col}</th>`).join('')}</tr>`;
+
+  const totalPages = Math.ceil(routeKeys.length / PAGE_SIZE);
+  if (currentPage > totalPages) currentPage = 1;
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const paginatedKeys = routeKeys.slice(startIndex, startIndex + PAGE_SIZE);
+
+  let html = '';
+  paginatedKeys.forEach((key) => {
+    const grp = groupedRoutes[key];
+    const color = getAvailColorScale(grp.availablePct);
+
+    html += `
+      <tr id="row-${grp.id}" data-map-key="${escapeAttr(grp.mapRouteKey)}" class="text-xs border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer font-sans" onclick="window.onTableRowClick('${escapeAttr(grp.mapRouteKey)}', '${grp.id}')">
+        <td class="p-3 text-center"><i data-lucide="chevron-right" id="icon-${grp.id}" class="w-4 h-4 text-slate-400 transition-transform duration-200 inline-block"></i></td>
+        <td class="p-3 whitespace-nowrap"><div class="font-bold text-slate-800 dark:text-white">${escapeHtml(grp.origin)} &rarr; ${escapeHtml(grp.shipToDesc)}</div><div class="text-[10px] text-slate-400">Zone: ${escapeHtml(grp.zone)}</div></td>
+        <td class="p-3 max-w-[200px]"><div class="font-bold text-slate-800 dark:text-slate-200 truncate"><span>${escapeHtml(grp.customerName)}</span> <span class="text-xs font-normal text-slate-500">(${escapeHtml(grp.customerType)})</span></div><div class="text-[10px] text-slate-400 truncate mt-0.5">${escapeHtml(grp.productCat)}</div></td>
+        <td class="p-3 whitespace-nowrap"><div class="font-semibold text-blue-600 dark:text-blue-400">${escapeHtml(grp.truckType)}</div></td>
+        <td class="p-3"><span class="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-300 font-extrabold text-[10px]">${grp.uniqueSubcons.size}</span></td>
+        <td class="p-3 whitespace-nowrap"><div class="font-Sarabun font-bold text-slate-800 dark:text-slate-200">${formatNum(grp.totalTrips)} Trip/WK</div></td>
+        <td class="p-3 min-w-[170px]">
+          <div class="flex items-center justify-between text-[10px] font-Sarabun font-bold mb-1"><span class="text-slate-500">Available:</span><span class="${color.text}">${grp.availablePct}% <span class="text-slate-400 font-normal">(~${formatNum(grp.totalAvailTrips, 1)} trips/wk)</span></span></div>
+        </td>
+      </tr>
+      <tr id="detail-${grp.id}" class="border-b border-slate-200 dark:border-slate-800 font-sans">
+        <td colspan="7" class="p-0">
+          <div class="accordion-detail" id="content-${grp.id}">
+            <div class="p-4 pl-12 border-l-4 border-orange-500 m-3 rounded-2xl bg-slate-50/80 dark:bg-zinc-950/80 shadow-inner">
+              <h4 class="text-xs font-bold mb-2 text-slate-700 dark:text-slate-300">Carriers Details (${grp.vendors.length})</h4>
+              <table class="w-full text-xs text-left border-collapse">
+                <thead class="text-slate-400 dark:text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-200 dark:border-slate-800">
+                  <tr><th class="py-2 px-3 font-bold w-1/4">Carrier Name</th><th class="py-2 px-2 font-bold text-center">Avg Trip</th><th class="py-2 px-3 font-bold text-center">Available Capacity</th><th class="py-2 px-3 font-bold text-center">Available Trips/Wk</th></tr>
+                </thead>
+                <tbody class="divide-y divide-slate-200/60 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
+                  ${grp.vendors
+                    .map((v) => {
+                      const vendorBadgeColor =
+                        v._parsed.availPct === 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600';
+                      return `<tr class="hover:bg-slate-100/60 transition-colors"><td class="py-3 px-3 font-bold text-slate-800 dark:text-slate-200">${escapeHtml(v.fwd_agent_desc || '-')}</td><td class="py-3 px-2 text-center font-Sarabun font-bold">${formatNum(v._parsed.trips)}</td><td class="py-3 px-3 text-center"><span class="px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center whitespace-nowrap ${vendorBadgeColor}">${Math.round(v._parsed.availPct)}%</span></td><td class="py-3 px-3 text-center font-Sarabun font-bold text-slate-700 dark:text-slate-300">${formatNum(v._parsed.availTrips, 1)}</td></tr>`;
+                    })
+                    .join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+  renderPaginationControls(totalPages, routeKeys.length);
+  if (typeof window.lucide !== 'undefined') window.lucide.createIcons({ root: tbody });
+}
+
+function renderPaginationControls(totalPages, totalItems) {
+  const paginationEl = document.getElementById('table-pagination');
+  if (!paginationEl) return;
+  const startItem = (currentPage - 1) * PAGE_SIZE + 1;
+  const endItem = Math.min(currentPage * PAGE_SIZE, totalItems);
+  paginationEl.innerHTML = `
+    <div class="flex items-center justify-between p-3 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 font-sans">
+      <div>แสดง <strong class="text-slate-800 dark:text-slate-200">${startItem} - ${endItem}</strong> จาก <strong class="text-slate-800 dark:text-slate-200">${totalItems.toLocaleString()}</strong> รายการ</div>
+      <div class="flex items-center gap-2">
+        <button onclick="window.changePage(-1)" ${currentPage === 1 ? 'disabled' : ''} class="px-3 py-1 rounded-lg border border-slate-200 bg-slate-50 font-bold hover:bg-orange-500 hover:text-white disabled:opacity-30 transition-all cursor-pointer">&lt; ก่อนหน้า</button>
+        <span class="font-Sarabun font-bold px-2">หน้า ${currentPage} / ${totalPages}</span>
+        <button onclick="window.changePage(1)" ${currentPage === totalPages ? 'disabled' : ''} class="px-3 py-1 rounded-lg border border-slate-200 bg-slate-50 font-bold hover:bg-orange-500 hover:text-white disabled:opacity-30 transition-all cursor-pointer">ถัดไป &gt;</button>
+      </div>
+    </div>
+  `;
+}
+
+function changePage(step) {
+  currentPage += step;
+  renderTable(window.currentFilteredData);
+}
+
+function toggleRouteDetail(routeId) {
+  const contentDiv = document.getElementById(`content-${routeId}`);
+  const icon = document.getElementById(`icon-${routeId}`);
+  if (contentDiv && icon) {
+    contentDiv.classList.toggle('expanded');
+    if (contentDiv.classList.contains('expanded')) {
+      contentDiv.style.maxHeight = contentDiv.scrollHeight + 'px';
+      icon.style.transform = 'rotate(90deg)';
+    } else {
+      contentDiv.style.maxHeight = '0px';
+      icon.style.transform = 'rotate(0deg)';
+    }
+  }
+}
+
+function onTableRowClick(mapRouteKey, grpId) {
+  highlightMapRoute(mapRouteKey);
+  toggleRouteDetail(grpId);
+}
+
+function focusTableRowByMapKey(mapKey) {
+  if (!mapKey) return;
+  const tc = document.getElementById('table-container');
+  if (tc && tc.classList.contains('table-hidden')) {
+    window.state.isTableExpanded = true;
+    tc.classList.remove('table-hidden');
+    tc.classList.add('table-expanded');
+  }
+  const sourceData =
+    window.currentFilteredData && window.currentFilteredData.length > 0
+      ? window.currentFilteredData
+      : window.globalRouteSheetData;
+  const matchedRows = sourceData.filter((row) => row._parsed.mapRouteKey === mapKey);
+  if (matchedRows.length === 0) {
+    window.showToast(`⚠️ ไม่พบข้อมูลในตารางสำหรับเส้นทางนี้`);
+    return;
+  }
+  currentPage = 1;
+  renderTable(matchedRows);
+}
+
+function filterTableByOrigin(originName) {
+  if (!originName) {
+    applyDynamicFilters();
+    return;
+  }
+  const cleanTargetOrigin = cleanAllSpaces(originName);
+  const matchedRows = window.globalRouteSheetData.filter((row) => row._parsed.cleanOrigin.includes(cleanTargetOrigin));
+  if (matchedRows.length === 0) {
+    window.showToast(`⚠️ ไม่พบข้อมูลเส้นทางสำหรับต้นทาง: ${originName}`);
+    return;
+  }
+  currentPage = 1;
+  window.currentFilteredData = matchedRows;
+  renderTable(matchedRows);
+}
+
+function exportFilteredDataToCSV() {
+  const dataToExport =
+    window.currentFilteredData && window.currentFilteredData.length > 0
+      ? window.currentFilteredData
+      : window.globalRouteSheetData;
+  if (!dataToExport || dataToExport.length === 0) return;
+  const headers = [
+    'Route ID',
+    'Origin',
+    'Province',
+    'Zone',
+    'Customer',
+    'Product',
+    'Truck',
+    'Carrier',
+    'Avg Trips/Wk',
+    'Available Backhaul %',
+    'Available Trips'
+  ];
+  let csvContent = '\uFEFF' + headers.join(',') + '\n';
+  dataToExport.forEach((row) => {
+    const p = row._parsed;
+    const values = [
+      row.id,
+      row.origin,
+      row.province,
+      row.zone,
+      row.customer_name,
+      row.product_category,
+      row.truck_type,
+      row.fwd_agent_desc,
+      p.trips,
+      p.availPct,
+      p.availTrips
+    ].map((val) => `"${String(val ?? '').replace(/"/g, '""')}"`);
+    csvContent += values.join(',') + '\n';
+  });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+  link.download = `Export_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
 
 // ==============================================================================
-// 7. EVENT LISTENERS & LIFECYCLE
+// 8. SIMULATION ENGINE
 // ==============================================================================
+async function initNewOrderMappingDropdowns() {
+  const routeData = window.globalRouteSheetData;
+  if (!routeData || routeData.length === 0) return;
+
+  const extractUnique = (columnName) =>
+    [
+      ...new Set(
+        routeData.map((row) => String(row[columnName] || '').trim()).filter((val) => val !== '' && val !== '-')
+      )
+    ].sort();
+  const updateDropdown = (elementId, optionsList) => {
+    const selectEl = document.getElementById(elementId);
+    if (!selectEl) return;
+    selectEl.innerHTML =
+      `<option value="ทั้งหมด">ทั้งหมด</option>` +
+      optionsList.map((val) => `<option value="${escapeAttr(val)}">${escapeHtml(val)}</option>`).join('');
+  };
+
+  updateDropdown('select-origin', extractUnique('origin'));
+  updateDropdown('select-product-category', extractUnique('product_category'));
+  updateDropdown('select-dest-province', extractUnique('province'));
+  updateDropdown('select-zone', extractUnique('zone'));
+  updateDropdown('select-truck-type', extractUnique('truck_type'));
+}
+
+function analyzeNewOrderMapping() {
+  const selectedOrigin = document.getElementById('select-origin')?.value.trim() || 'ทั้งหมด';
+  const selectedProvince = document.getElementById('select-dest-province')?.value.trim() || 'ทั้งหมด';
+  const customerNameInput = document.getElementById('input-customer-name')?.value.trim() || 'ลูกค้าใหม่';
+
+  let latInput = parseFloat(document.getElementById('input-lat')?.value);
+  let lngInput = parseFloat(document.getElementById('input-lng')?.value);
+
+  if (
+    (isNaN(latInput) || isNaN(lngInput)) &&
+    window.provinceLocationMap &&
+    window.provinceLocationMap[selectedProvince]
+  ) {
+    latInput = window.provinceLocationMap[selectedProvince].lat;
+    lngInput = window.provinceLocationMap[selectedProvince].lng;
+  }
+
+  document.getElementById('sim-input-state')?.classList.add('hidden');
+  document.getElementById('sim-results-state')?.classList.remove('hidden');
+
+  const summaryRouteEl = document.getElementById('summary-route-label');
+  if (summaryRouteEl)
+    summaryRouteEl.innerHTML = `${escapeHtml(selectedOrigin)} <i data-lucide="arrow-right" class="w-3 h-3 text-orange-500 inline"></i> ${escapeHtml(selectedProvince)}`;
+
+  const matchedSubcons = window.globalRouteSheetData
+    .filter((row) => {
+      const p = row._parsed;
+      if (selectedOrigin !== 'ทั้งหมด' && !p.cleanOrigin.includes(cleanAllSpaces(selectedOrigin))) return false;
+      if (selectedProvince !== 'ทั้งหมด' && !p.cleanProv.includes(cleanAllSpaces(selectedProvince))) return false;
+      if (p.availPct <= 0 || !row.fwd_agent_desc || row.fwd_agent_desc === 'ไม่ระบุ') return false;
+      return true;
+    })
+    .sort((a, b) => b._parsed.availPct - a._parsed.availPct);
+
+  renderSubconRankings(matchedSubcons);
+
+  if (typeof drawAllSheetRoutesOnSimMap === 'function') {
+    const customerInfo = { name: customerNameInput, lat: latInput, lng: lngInput };
+    const originInfo = window.originLocationMap ? window.originLocationMap[selectedOrigin] : null;
+    drawAllSheetRoutesOnSimMap(matchedSubcons, selectedOrigin, selectedProvince, customerInfo, originInfo);
+  }
+}
+
+function renderSubconRankings(recommendations) {
+  const rankListEl = document.getElementById('subcon-rank-list');
+  if (!rankListEl) return;
+  if (!recommendations || recommendations.length === 0) {
+    rankListEl.innerHTML = `<div class="p-6 text-center text-xs text-slate-400 border border-dashed rounded-2xl border-slate-200">ไม่พบผู้รับเหมาที่มีโควตาว่างในเส้นทางนี้</div>`;
+    return;
+  }
+
+  rankListEl.innerHTML = recommendations
+    .slice(0, 20)
+    .map((item, idx) => {
+      return `
+      <div onclick="window.highlightSubconRoute('${escapeAttr(item.id)}', this)" class="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm cursor-pointer transition-all hover:scale-[1.01] font-sans">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <h4 class="text-xs font-extrabold text-slate-800">${escapeHtml(item.fwd_agent_desc)}</h4>
+          <span class="text-xs font-Sarabun font-bold text-emerald-600">ว่างอีก ${Math.round(item._parsed.availPct)}%</span>
+        </div>
+        <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden flex mb-2"><div class="bg-orange-500 h-full" style="width: ${item._parsed.totalPct}%"></div><div class="bg-emerald-500 h-full" style="width: ${item._parsed.availPct}%"></div></div>
+      </div>
+    `;
+    })
+    .join('');
+}
+
+function highlightSubconRoute(subconId, cardEl) {
+  document.querySelectorAll('#subcon-rank-list > div').forEach((card) => {
+    card.classList.remove('ring-2', 'ring-orange-500', 'shadow-lg');
+  });
+  if (cardEl) cardEl.classList.add('ring-2', 'ring-orange-500', 'shadow-lg');
+  // highlightMapRouteById(subconId); // Assume implemented in map.js
+}
+
+function backToSimInput() {
+  document.getElementById('sim-input-state')?.classList.remove('hidden');
+  document.getElementById('sim-results-state')?.classList.add('hidden');
+}
+
+// ==============================================================================
+// 9. EVENT LISTENERS SETUP
+// ==============================================================================
+function setupEventListeners() {
+  // Sidebar Toggle
+  document.getElementById('toggle-sidebar')?.addEventListener('click', () => {
+    window.state.isSidebarOpen = !window.state.isSidebarOpen;
+    const sb = document.getElementById('sidebar');
+    if (sb)
+      sb.className = `${window.state.isSidebarOpen ? 'w-64' : 'w-20'} relative z-50 border-r flex flex-col shrink-0 transition-[width] duration-300 ease-in-out bg-white dark:bg-zinc-900 border-slate-200 dark:border-slate-800`;
+    document.getElementById('sidebar-brand').style.display = window.state.isSidebarOpen ? 'flex' : 'none';
+    document.querySelector('.user-info-wrapper').style.display = window.state.isSidebarOpen ? 'flex' : 'none';
+    const toggleBtn = document.getElementById('toggle-sidebar');
+    if (toggleBtn && typeof window.lucide !== 'undefined') {
+      toggleBtn.innerHTML = `<i data-lucide="${window.state.isSidebarOpen ? 'chevron-left' : 'menu'}" class="w-4 h-4"></i>`;
+      window.lucide.createIcons({ root: toggleBtn });
+    }
+    renderSidebarMenu();
+    setTimeout(() => {
+      if (execMap) execMap.invalidateSize();
+      if (dashMap) dashMap.invalidateSize();
+      if (simMap) simMap.invalidateSize();
+    }, 310);
+  });
+
+  // Table Toggle
+  document.getElementById('toggle-table')?.addEventListener('click', () => {
+    window.state.isTableExpanded = !window.state.isTableExpanded;
+    const tc = document.getElementById('table-container');
+    if (tc) {
+      tc.classList.toggle('table-hidden', !window.state.isTableExpanded);
+      tc.classList.toggle('table-expanded', window.state.isTableExpanded);
+    }
+    if (dashMap) setTimeout(() => dashMap.invalidateSize(), 300);
+  });
+
+  // Filters Toggles
+  document.getElementById('toggle-filters-main')?.addEventListener('click', () => {
+    document.getElementById('filters-content')?.classList.toggle('hidden');
+  });
+  document.querySelectorAll('.filter-accordion-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById(btn.getAttribute('data-target'))?.classList.toggle('hidden');
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.custom-select-container')) {
+      document.querySelectorAll('.custom-select-dropdown').forEach((el) => el.classList.add('hidden'));
+    }
+  });
+
+  // Inputs Debouncing
+  const searchInput = document.querySelector('#filters-content input[type="text"]');
+  if (searchInput)
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => applyDynamicFilters(), 300);
+    });
+
+  ['filter-backhaul-min', 'filter-backhaul-max', 'filter-min-avail-trips'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('input', () => {
+      clearTimeout(numericDebounceTimer);
+      numericDebounceTimer = setTimeout(() => applyDynamicFilters(), 250);
+    });
+  });
+
+  // Display Mode
+  document.querySelectorAll('#display-mode-segmented .mode-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const selectedBtn = e.currentTarget;
+      window.state.activeFilters.displayMode = selectedBtn.getAttribute('data-mode');
+      document
+        .querySelectorAll('#display-mode-segmented .mode-btn')
+        .forEach(
+          (b) =>
+            (b.className =
+              'mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-slate-600 hover:bg-white/50')
+        );
+      selectedBtn.className =
+        'mode-btn flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-[#f97316] text-white shadow-sm';
+      applyDynamicFilters();
+    });
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof window.lucide !== 'undefined') window.lucide.createIcons();
   setLoginButtonState('idle');
+  setupEventListeners();
 
   document.getElementById('btn-login-ms')?.addEventListener('click', (e) => {
     e.preventDefault();
     signInWithMicrosoft();
   });
-
   document.getElementById('btn-logout')?.addEventListener('click', (e) => {
     e.preventDefault();
     signOutUser();
   });
-
   initializeAuthSession();
 
   document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
     window.state.isDark = !window.state.isDark;
     document.documentElement.classList.toggle('dark', window.state.isDark);
-    if (typeof updateMapTiles === 'function') updateMapTiles();
+    updateMapTiles();
   });
 });
