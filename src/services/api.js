@@ -6,7 +6,8 @@ const API_CONFIG = {
     ROUTES_VIEW: 'get_view_routes_with_coords_secure',
     EXEC_SUMMARY_VIEW: 'view_exec_province_summary',
     ORIGIN_LOCATIONS: 'brf_locations',
-    PROVINCE_LOCATIONS: 'province_locations'
+    PROVINCE_LOCATIONS: 'province_locations',
+    DAILY_TRANSACTIONS: 'route_daily_transactions'
   },
   RPC: {
     EXEC_KPI: 'get_executive_summary_kpi'
@@ -296,4 +297,60 @@ export async function loadDetailedRoutesInBackground() {
   if (typeof window.populateDashboardFilters === 'function') {
     window.populateDashboardFilters(window.globalRouteSheetData);
   }
+}
+let inFlightTrendFetchPromise = null;
+
+export async function fetchRouteDailyTransactions() {
+  if (window.globalTrendData && window.globalTrendData.length > 0) {
+    return window.globalTrendData;
+  }
+
+  if (inFlightTrendFetchPromise) {
+    return inFlightTrendFetchPromise;
+  }
+
+  inFlightTrendFetchPromise = (async () => {
+    try {
+      console.log('[API] 📈 Fetching historical trend data from Supabase...');
+      const step = 50000;
+      let combinedData = [];
+      let from = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const to = from + step - 1;
+        const { data, error } = await supabase
+          .from(API_CONFIG.TABLES.DAILY_TRANSACTIONS)
+          .select(
+            'origin,customer_name,customer_type,product_category,province,zone,truck_type,fwd_agent_desc,ship_to_desc,transaction_date,actual_trips'
+          )
+          .order('transaction_date', { ascending: true })
+          .range(from, to);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          combinedData = combinedData.concat(data);
+          if (data.length < step) {
+            hasMore = false;
+          } else {
+            from += step;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      console.log(`[API] ✅ Trend Data Fetch Complete. Total: ${combinedData.length} rows.`);
+      window.globalTrendData = combinedData;
+      return combinedData;
+    } catch (err) {
+      handleApiError(err, 'fetchRouteDailyTransactions');
+      return [];
+    } finally {
+      inFlightTrendFetchPromise = null;
+    }
+  })();
+
+  return inFlightTrendFetchPromise;
 }
