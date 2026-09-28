@@ -134,27 +134,79 @@ window.toggleTrendChart = function () {
   }
 };
 
-// ฟังก์ชันช่วยจัดกลุ่มวันที่เป็นรายสัปดาห์ (เริ่มต้นวันจันทร์)
+// ฟังก์ชันช่วยจัดกลุ่มวันที่เป็นรายสัปดาห์ (เริ่มต้นวันจันทร์) แบบไม่เพี้ยนตาม Timezone
 function getWeekStartDateStr(dateString) {
-  const d = new Date(dateString);
-  if (isNaN(d.getTime())) return dateString;
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const weekStart = new Date(d.setDate(diff));
-  return weekStart.toISOString().slice(0, 10);
+  const [y, m, d] = dateString.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  if (isNaN(date.getTime())) return dateString;
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  const weekStart = new Date(date.setDate(diff));
+  const wy = weekStart.getFullYear();
+  const wm = String(weekStart.getMonth() + 1).padStart(2, '0');
+  const wd = String(weekStart.getDate()).padStart(2, '0');
+  return `${wy}-${wm}-${wd}`;
+}
+
+// ฟังก์ชันสร้างรายการช่วงเวลาต่อเนื่อง (เพื่ออุดช่องโหว่วันที่ไม่มีงานวิ่งให้เป็น 0)
+function generateContinuousTimeKeys(latestDateStr, timeframe, count) {
+  const keys = [];
+  const [y, m, d] = latestDateStr.split('-').map(Number);
+  const baseDate = new Date(y, m - 1, d);
+  if (isNaN(baseDate.getTime())) return [];
+
+  if (timeframe === 'day') {
+    for (let i = count - 1; i >= 0; i--) {
+      const cur = new Date(baseDate);
+      cur.setDate(cur.getDate() - i);
+      const cy = cur.getFullYear();
+      const cm = String(cur.getMonth() + 1).padStart(2, '0');
+      const cd = String(cur.getDate()).padStart(2, '0');
+      keys.push(`${cy}-${cm}-${cd}`);
+    }
+  } else if (timeframe === 'week') {
+    const latestMondayStr = getWeekStartDateStr(latestDateStr);
+    const [wy, wm, wd] = latestMondayStr.split('-').map(Number);
+    const mondayDate = new Date(wy, wm - 1, wd);
+    for (let i = count - 1; i >= 0; i--) {
+      const cur = new Date(mondayDate);
+      cur.setDate(cur.getDate() - i * 7);
+      const cy = cur.getFullYear();
+      const cm = String(cur.getMonth() + 1).padStart(2, '0');
+      const cd = String(cur.getDate()).padStart(2, '0');
+      keys.push(`${cy}-${cm}-${cd}`);
+    }
+  } else if (timeframe === 'month') {
+    for (let i = count - 1; i >= 0; i--) {
+      const cur = new Date(baseDate.getFullYear(), baseDate.getMonth() - i, 1);
+      const cy = cur.getFullYear();
+      const cm = String(cur.getMonth() + 1).padStart(2, '0');
+      keys.push(`${cy}-${cm}`);
+    }
+  }
+  return keys;
 }
 
 window.renderTrendChart = async function () {
   const chartEl = document.querySelector('#chart-route-trend');
   if (!chartEl) return;
 
-  const timeframe = document.getElementById('trend-timeframe')?.value || 'week';
+  const rawTimeframe = document.getElementById('trend-timeframe')?.value || 'week-8';
+  const [timeframe, pointStr] = rawTimeframe.split('-');
+  const maxPoints = parseInt(pointStr, 10) || 8;
 
   // 1. ดึงข้อมูลจาก Supabase หากยังไม่มีในหน่วยความจำ
   if (!window.globalProcessedTrendData) {
     chartEl.innerHTML = `<div class="flex items-center justify-center h-full text-xs text-slate-400 font-sans animate-pulse">กำลังดึงข้อมูลประวัติการวิ่งงานจริง (Actual Data)...</div>`;
     const rawTrend = await fetchRouteDailyTransactions();
     window.globalProcessedTrendData = precomputeTrendData(rawTrend);
+
+    // หา Global Max Date ของระบบทั้งหมดเก็บไว้เป็นมาตรฐานแกนเวลา
+    window.globalMaxTrendDate = window.globalProcessedTrendData.reduce(
+      (max, item) => (item.dateStr > max ? item.dateStr : max),
+      ''
+    );
+
     chartEl.innerHTML = '';
     if (window.routeTrendChart) {
       window.routeTrendChart.destroy();
@@ -163,47 +215,49 @@ window.renderTrendChart = async function () {
   }
 
   const trendData = window.globalProcessedTrendData || [];
-  // ดึงข้อมูลแถวที่กำลังแสดงผลอยู่ในตาราง Route Dashboard ปัจจุบัน (จากทั้งหมด 15,205 แถว)
   const activeRoutes = window.currentFilteredData || window.globalRouteSheetData || [];
 
-  // 2. สร้าง Lookup Map ระดับแถว (Row-level) จากข้อมูลที่ผ่าน Filter บนหน้าจอ
+  // 2. สร้าง Lookup Map ระดับแถว (15,205 แถว) และคำนวณค่าเฉลี่ย Baseline ต่อสัปดาห์
   const exactRowMap = {};
-  const fallbackGroupMap = {};
+  let plannedWeeklyTripsSum = 0;
+  let plannedDailyTripsSum = 0;
 
   activeRoutes.forEach((r) => {
     const p = r._parsed;
     if (p) {
-      // เก็บค่า % ว่างของแถวนั้นๆ โดยตรง (Exact 15,205 row match)
       if (!exactRowMap[p.rowMatchKey]) {
         exactRowMap[p.rowMatchKey] = { sumAvailPct: 0, count: 0 };
       }
       exactRowMap[p.rowMatchKey].sumAvailPct += p.availPct;
       exactRowMap[p.rowMatchKey].count += 1;
 
-      // เก็บระดับกลุ่มเส้นทางสำรองไว้ กรณีชื่อผู้รับเหมาใน Excel พิมพ์ไม่ตรงกันเป๊ะ
-      if (!fallbackGroupMap[p.distinctKey]) {
-        fallbackGroupMap[p.distinctKey] = { sumAvailPct: 0, count: 0 };
-      }
-      fallbackGroupMap[p.distinctKey].sumAvailPct += p.availPct;
-      fallbackGroupMap[p.distinctKey].count += 1;
+      plannedWeeklyTripsSum += p.trips;
+      plannedDailyTripsSum += p.tripsDay;
     }
   });
+
+  // คำนวณเส้น Baseline มาตรฐานตาม Timeframe ที่เลือก
+  const baselineValue =
+    timeframe === 'day'
+      ? Number(plannedDailyTripsSum.toFixed(1))
+      : timeframe === 'week'
+        ? Number(plannedWeeklyTripsSum.toFixed(1))
+        : Number((plannedWeeklyTripsSum * 4.33).toFixed(1));
 
   // 3. รวมยอด Actual Trips เฉพาะแถวที่ตรงกับในตาราง Route Dashboard
   const timeGroupMap = {};
 
   trendData.forEach((tx) => {
-    // เช็คว่าตรงกับแถวในตารางที่กรองอยู่หรือไม่ (เช็คระดับแถวก่อน)
-    let matchedStat = exactRowMap[tx.rowMatchKey];
-    if (!matchedStat) return; // ถ้าแถวนี้ถูกกรองออกไปแล้วในตาราง ให้ข้ามทันที
+    const matchedStat = exactRowMap[tx.rowMatchKey];
+    if (!matchedStat) return;
 
     const availRatio = matchedStat.sumAvailPct / matchedStat.count / 100;
     let timeKey = tx.dateStr;
 
     if (timeframe === 'month') {
-      timeKey = tx.dateStr.slice(0, 7); // YYYY-MM
+      timeKey = tx.dateStr.slice(0, 7);
     } else if (timeframe === 'week') {
-      timeKey = getWeekStartDateStr(tx.dateStr); // วันจันทร์ของสัปดาห์
+      timeKey = getWeekStartDateStr(tx.dateStr);
     }
 
     if (!timeGroupMap[timeKey]) {
@@ -213,56 +267,93 @@ window.renderTrendChart = async function () {
     timeGroupMap[timeKey].estAvailActual += tx.actualTrips * availRatio;
   });
 
-  // 4. เรียงลำดับเวลาและเตรียมพล็อตกราฟ
-  const sortedKeys = Object.keys(timeGroupMap).sort();
-  const maxPoints = timeframe === 'day' ? 30 : timeframe === 'week' ? 16 : 12;
-  const displayKeys = sortedKeys.slice(-maxPoints);
+  // 4. ใช้ Global Max Date เป็นจุดยึดเพื่อให้ Timeline ตรงกันเสมอทุกเส้นทาง
+  const anchorDateStr = window.globalMaxTrendDate || '';
+  const displayKeys = anchorDateStr ? generateContinuousTimeKeys(anchorDateStr, timeframe, maxPoints) : [];
 
   const categories = [];
   const dataTotal = [];
   const dataAvail = [];
+  const dataBaseline = [];
+
+  let sumActualPeriod = 0;
+  let sumAvailPeriod = 0;
+  let peakActualPeriod = 0;
 
   displayKeys.forEach((key) => {
     let label = key;
     if (timeframe === 'day' || timeframe === 'week') {
-      const d = new Date(key);
-      if (!isNaN(d.getTime())) {
-        label = d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+      const [y, m, d] = key.split('-').map(Number);
+      const dateObj = new Date(y, m - 1, d);
+      if (!isNaN(dateObj.getTime())) {
+        label = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
         if (timeframe === 'week') label = `สัปดาห์ ${label}`;
       }
     } else if (timeframe === 'month') {
-      const [y, m] = key.split('-');
-      const d = new Date(Number(y), Number(m) - 1, 1);
-      if (!isNaN(d.getTime())) {
-        label = d.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+      const [y, m] = key.split('-').map(Number);
+      const dateObj = new Date(y, m - 1, 1);
+      if (!isNaN(dateObj.getTime())) {
+        label = dateObj.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
       }
     }
 
+    const stat = timeGroupMap[key] || { totalActual: 0, estAvailActual: 0 };
+    const actualVal = Number(stat.totalActual.toFixed(1));
+    const availVal = Number(stat.estAvailActual.toFixed(1));
+
+    sumActualPeriod += actualVal;
+    sumAvailPeriod += availVal;
+    if (actualVal > peakActualPeriod) peakActualPeriod = actualVal;
+
     categories.push(label);
-    dataTotal.push(Number(timeGroupMap[key].totalActual.toFixed(1)));
-    dataAvail.push(Number(timeGroupMap[key].estAvailActual.toFixed(1)));
+    dataTotal.push(actualVal);
+    dataAvail.push(availVal);
+    dataBaseline.push(baselineValue);
   });
 
+  // 5. อัปเดตตัวเลข Summary Badges บนหัวการ์ด
+  const setBadge = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = val.toLocaleString();
+  };
+  setBadge('trend-stat-total', Number(sumActualPeriod.toFixed(1)));
+  setBadge('trend-stat-peak', Number(peakActualPeriod.toFixed(1)));
+  setBadge('trend-stat-avail', Number(sumAvailPeriod.toFixed(1)));
+
+  const subEl = document.getElementById('trend-subtitle-range');
+  if (subEl && categories.length > 0) {
+    subEl.innerText = `ข้อมูลตั้งแต่ ${categories[0]} ถึง ${categories[categories.length - 1]} (จาก ${activeRoutes.length.toLocaleString()} รายการที่กรอง)`;
+  }
+
+  // 6. ตั้งค่าและวาดกราฟ ApexCharts
   const options = {
     series: [
-      { name: 'Actual Volume (เที่ยววิ่งจริง)', data: dataTotal },
-      { name: 'Available Backhaul (โควตาว่างตามจริง)', data: dataAvail }
+      { name: 'Actual Volume (เที่ยววิ่งจริง)', type: 'area', data: dataTotal },
+      { name: 'Available Backhaul (โควตาว่าง)', type: 'area', data: dataAvail },
+      { name: 'Avg Baseline (ค่าเฉลี่ยแผน)', type: 'line', data: dataBaseline }
     ],
     chart: {
-      type: 'area',
       height: '100%',
       toolbar: { show: false },
       fontFamily: 'Sarabun, sans-serif',
       background: 'transparent',
-      animations: { enabled: true, easing: 'easeinout', speed: 600 }
+      animations: { enabled: true, easing: 'easeinout', speed: 500 }
     },
-    colors: ['#3b82f6', '#10b981'],
+    colors: ['#3b82f6', '#10b981', '#f97316'],
     fill: {
-      type: 'gradient',
-      gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 100] }
+      type: ['gradient', 'gradient', 'solid'],
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] }
     },
     dataLabels: { enabled: false },
-    stroke: { curve: 'smooth', width: 2.5 },
+    stroke: {
+      curve: 'monotoneCubic', // ป้องกันเส้นกราฟมุดต่ำกว่า 0
+      width: [2.5, 2.5, 1.8],
+      dashArray: [0, 0, 5] // เส้นที่ 3 (Baseline) เป็นเส้นประ
+    },
+    markers: {
+      size: [3.5, 3.5, 0],
+      hover: { size: 6 }
+    },
     xaxis: {
       categories: categories,
       labels: { style: { colors: '#94a3b8', fontSize: '10px', fontWeight: 600 } },
@@ -270,9 +361,25 @@ window.renderTrendChart = async function () {
       axisTicks: { show: false }
     },
     yaxis: {
+      min: 0,
       labels: {
         style: { colors: '#94a3b8', fontSize: '10px', fontWeight: 600 },
-        formatter: (value) => value.toLocaleString()
+        formatter: (value) => Math.round(value).toLocaleString()
+      }
+    },
+    tooltip: {
+      shared: true,
+      intersect: false,
+      y: {
+        formatter: function (val, { seriesIndex, dataPointIndex, w }) {
+          if (val === undefined || val === null) return '0 trips';
+          if (seriesIndex === 1) {
+            const total = w.globals.series[0][dataPointIndex] || 0;
+            const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+            return `${val.toLocaleString()} trips (${pct}% Avail)`;
+          }
+          return `${val.toLocaleString()} trips`;
+        }
       }
     },
     grid: {
@@ -281,11 +388,7 @@ window.renderTrendChart = async function () {
       yaxis: { lines: { show: true } }
     },
     theme: { mode: window.state.isDark ? 'dark' : 'light' },
-    legend: { position: 'top', horizontalAlign: 'right', fontSize: '11px', fontWeight: 700 },
-    noData: {
-      text: 'ไม่พบประวัติการวิ่งงานสำหรับเงื่อนไขตัวกรองนี้',
-      style: { color: '#94a3b8', fontSize: '12px', fontFamily: 'Sarabun, sans-serif' }
-    }
+    legend: { position: 'top', horizontalAlign: 'right', fontSize: '11px', fontWeight: 700 }
   };
 
   if (window.routeTrendChart) {

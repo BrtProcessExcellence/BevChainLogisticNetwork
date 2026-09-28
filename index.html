@@ -1208,49 +1208,80 @@
               id="table-container"
               class="absolute bottom-0 left-0 w-full z-20 flex flex-col table-expanded font-sans"
             >
-              <!-- 💡 1. เพิ่มกล่อง TREND CHART PANEL (ซ่อนไว้เป็นค่าเริ่มต้น) -->
+              <!-- 💡 TREND CHART PANEL (UPGRADED) -->
               <div
                 id="trend-chart-container"
                 class="hidden absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-[96%] max-w-6xl z-10 transition-all duration-300 opacity-0 translate-y-10 pointer-events-none flex-col"
               >
                 <div
-                  class="w-full bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border border-slate-300 dark:border-slate-700 rounded-2xl shadow-[0_-15px_40px_-5px_rgba(0,0,0,0.3)] flex flex-col overflow-hidden"
+                  class="w-full bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border border-slate-300 dark:border-slate-700 rounded-2xl shadow-[0_-15px_40px_-5px_rgba(0,0,0,0.3)] flex flex-col overflow-hidden font-sans"
                 >
-                  <!-- Header กราฟ -->
+                  <!-- Header กราฟ พร้อม Summary Badges -->
                   <div
-                    class="p-3 px-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-zinc-950"
+                    class="p-3 px-5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap justify-between items-center gap-3 bg-slate-50 dark:bg-zinc-950"
                   >
-                    <div class="flex items-center gap-2.5">
+                    <div class="flex items-center gap-3">
                       <div
                         class="p-1.5 bg-orange-100 dark:bg-orange-900/50 rounded-lg text-orange-600 dark:text-orange-400"
                       >
                         <i data-lucide="trending-up" class="w-4 h-4"></i>
                       </div>
-                      <h4 class="text-xs font-extrabold text-slate-800 dark:text-white uppercase tracking-wider">
-                        Volume Trend Analytics
-                      </h4>
+                      <div>
+                        <h4 class="text-xs font-extrabold text-slate-800 dark:text-white uppercase tracking-wider">
+                          Volume Trend Analytics
+                        </h4>
+                        <p id="trend-subtitle-range" class="text-[10px] text-slate-400 font-medium">
+                          Historical actual trips vs available backhaul capacity
+                        </p>
+                      </div>
+
+                      <!-- Summary Badges -->
+                      <div
+                        class="hidden md:flex items-center gap-2 ml-4 pl-4 border-l border-slate-200 dark:border-slate-800 text-[10px]"
+                      >
+                        <div
+                          class="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-bold"
+                        >
+                          Total Actual: <strong id="trend-stat-total" class="font-black">0</strong> trips
+                        </div>
+                        <div
+                          class="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 font-bold"
+                        >
+                          Peak: <strong id="trend-stat-peak" class="font-black">0</strong> trips
+                        </div>
+                        <div
+                          class="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 font-bold"
+                        >
+                          Est. Backhaul: <strong id="trend-stat-avail" class="font-black">0</strong> trips
+                        </div>
+                      </div>
                     </div>
-                    <div class="flex gap-3 items-center">
+
+                    <div class="flex gap-2.5 items-center">
                       <select
                         id="trend-timeframe"
                         onchange="window.renderTrendChart()"
-                        class="text-[10px] font-bold py-1.5 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer hover:border-orange-500 transition-colors shadow-sm"
+                        class="text-[11px] font-bold py-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer hover:border-orange-500 transition-colors shadow-sm"
                       >
-                        <option value="day">Daily Trend (7 Days)</option>
-                        <option value="week" selected>Weekly Trend (8 Weeks)</option>
-                        <option value="month">Monthly Trend (6 Months)</option>
+                        <option value="day-7">Daily Trend (7 Days)</option>
+                        <option value="day-14">Daily Trend (14 Days)</option>
+                        <option value="day-30">Daily Trend (30 Days)</option>
+                        <option value="week-8" selected>Weekly Trend (8 Weeks)</option>
+                        <option value="week-16">Weekly Trend (16 Weeks)</option>
+                        <option value="month-6">Monthly Trend (6 Months)</option>
+                        <option value="month-12">Monthly Trend (12 Months)</option>
                       </select>
                       <div class="w-px h-5 bg-slate-200 dark:bg-slate-700"></div>
                       <button
                         onclick="window.toggleTrendChart()"
-                        class="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-red-500 transition-colors"
+                        class="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
                       >
                         <i data-lucide="x" class="w-4 h-4"></i>
                       </button>
                     </div>
                   </div>
                   <!-- พื้นที่วาดกราฟ -->
-                  <div class="p-4 h-[220px] w-full bg-white/50 dark:bg-zinc-900/50">
+                  <div class="p-4 pt-2 h-[240px] w-full bg-white/50 dark:bg-zinc-900/50">
                     <div id="chart-route-trend" class="w-full h-full"></div>
                   </div>
                 </div>
