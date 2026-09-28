@@ -311,26 +311,39 @@ window.renderTrendChart = async function () {
     dataBaseline.push(baselineValue);
   });
 
-  // 5. อัปเดตตัวเลข Summary Badges บนหัวการ์ด
-  const setBadge = (id, val) => {
+  // 5. อัปเดตตัวเลข Summary Badges บนหัวการ์ด ให้มีทั้งยอดรวมและค่าเฉลี่ยเทียบตาราง
+  const unitLabel = timeframe === 'day' ? 'trips/day' : timeframe === 'week' ? 'trips/wk' : 'trips/mo';
+  const validPeriods = dataTotal.filter((v) => v > 0).length || 1;
+  const avgActualPerPeriod = sumActualPeriod / validPeriods;
+  const avgAvailPerPeriod = sumAvailPeriod / validPeriods;
+
+  const setBadgeHtml = (id, html) => {
     const el = document.getElementById(id);
-    if (el) el.innerText = val.toLocaleString();
+    if (el) el.innerHTML = html;
   };
-  setBadge('trend-stat-total', Number(sumActualPeriod.toFixed(1)));
-  setBadge('trend-stat-peak', Number(peakActualPeriod.toFixed(1)));
-  setBadge('trend-stat-avail', Number(sumAvailPeriod.toFixed(1)));
+
+  // แสดงค่าเฉลี่ยต่อหน่วยเวลาเป็นตัวหลัก (เพื่อให้ตรงกับตารางเวลาเลือก Weekly) และวงเล็บยอดสะสมรวม
+  setBadgeHtml(
+    'trend-stat-total',
+    `${Math.round(avgActualPerPeriod).toLocaleString()} ${unitLabel} <span class="font-normal opacity-75">(Sum: ${Math.round(sumActualPeriod).toLocaleString()})</span>`
+  );
+  setBadgeHtml('trend-stat-peak', `${Math.round(peakActualPeriod).toLocaleString()} ${unitLabel}`);
+  setBadgeHtml(
+    'trend-stat-avail',
+    `${Number(avgAvailPerPeriod.toFixed(1)).toLocaleString()} ${unitLabel} <span class="font-normal opacity-75">(Table Avg: ${Number(plannedWeeklyTripsSum > 0 ? activeRoutes.reduce((s, r) => s + (r._parsed?.availTrips || 0), 0) : 0).toFixed(1)}/wk)</span>`
+  );
 
   const subEl = document.getElementById('trend-subtitle-range');
   if (subEl && categories.length > 0) {
-    subEl.innerText = `ข้อมูลตั้งแต่ ${categories[0]} ถึง ${categories[categories.length - 1]} (จาก ${activeRoutes.length.toLocaleString()} รายการที่กรอง)`;
+    subEl.innerText = `ข้อมูลตั้งแต่ ${categories[0]} ถึง ${categories[categories.length - 1]} (${activeRoutes.length.toLocaleString()} รายการ • ข้อมูลจริงถึง ${anchorDateStr})`;
   }
 
   // 6. ตั้งค่าและวาดกราฟ ApexCharts
   const options = {
     series: [
-      { name: 'Actual Volume (เที่ยววิ่งจริง)', type: 'area', data: dataTotal },
-      { name: 'Available Backhaul (โควตาว่าง)', type: 'area', data: dataAvail },
-      { name: 'Avg Baseline (ค่าเฉลี่ยแผน)', type: 'line', data: dataBaseline }
+      { name: `Actual Volume (${unitLabel})`, type: 'area', data: dataTotal },
+      { name: `Available Backhaul (${unitLabel})`, type: 'area', data: dataAvail },
+      { name: `Table Avg Baseline (${baselineValue.toLocaleString()} ${unitLabel})`, type: 'line', data: dataBaseline }
     ],
     chart: {
       height: '100%',
@@ -346,9 +359,9 @@ window.renderTrendChart = async function () {
     },
     dataLabels: { enabled: false },
     stroke: {
-      curve: 'monotoneCubic', // ป้องกันเส้นกราฟมุดต่ำกว่า 0
-      width: [2.5, 2.5, 1.8],
-      dashArray: [0, 0, 5] // เส้นที่ 3 (Baseline) เป็นเส้นประ
+      curve: 'monotoneCubic',
+      width: [2.5, 2.5, 2],
+      dashArray: [0, 0, 5]
     },
     markers: {
       size: [3.5, 3.5, 0],
@@ -372,13 +385,13 @@ window.renderTrendChart = async function () {
       intersect: false,
       y: {
         formatter: function (val, { seriesIndex, dataPointIndex, w }) {
-          if (val === undefined || val === null) return '0 trips';
+          if (val === undefined || val === null) return `0 ${unitLabel}`;
           if (seriesIndex === 1) {
             const total = w.globals.series[0][dataPointIndex] || 0;
             const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-            return `${val.toLocaleString()} trips (${pct}% Avail)`;
+            return `${val.toLocaleString()} ${unitLabel} (${pct}% Avail)`;
           }
-          return `${val.toLocaleString()} trips`;
+          return `${val.toLocaleString()} ${unitLabel}`;
         }
       }
     },
