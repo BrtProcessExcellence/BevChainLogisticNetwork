@@ -1222,7 +1222,7 @@
                   >
                     <div class="flex items-center gap-3">
                       <div
-                        class="p-1.5 bg-orange-100 dark:bg-orange-900/50 rounded-lg text-orange-600 dark:text-orange-400"
+                        class="p-1.5 bg-purple-100 dark:bg-purple-900/50 rounded-lg text-purple-600 dark:text-purple-400"
                       >
                         <i data-lucide="trending-up" class="w-4 h-4"></i>
                       </div>
@@ -1231,7 +1231,7 @@
                           Volume Trend Analytics
                         </h4>
                         <p id="trend-subtitle-range" class="text-[10px] text-slate-400 font-medium">
-                          Historical actual trips vs available backhaul capacity
+                          Actual vs Available Backhaul
                         </p>
                       </div>
 
@@ -1240,41 +1240,57 @@
                         class="hidden md:flex items-center gap-2 ml-4 pl-4 border-l border-slate-200 dark:border-slate-800 text-[10px]"
                       >
                         <div
-                          class="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-bold"
+                          class="px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 font-bold"
                         >
                           Total Actual: <strong id="trend-stat-total" class="font-black">0</strong> trips
                         </div>
                         <div
-                          class="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 font-bold"
+                          class="px-2.5 py-1 rounded-lg bg-pink-50 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400 font-bold"
                         >
                           Peak: <strong id="trend-stat-peak" class="font-black">0</strong> trips
                         </div>
                         <div
-                          class="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 font-bold"
+                          class="px-2.5 py-1 rounded-lg bg-cyan-50 dark:bg-cyan-950/50 text-cyan-600 dark:text-cyan-400 font-bold"
                         >
                           Est. Backhaul: <strong id="trend-stat-avail" class="font-black">0</strong> trips
                         </div>
                       </div>
                     </div>
 
-                    <div class="flex gap-2.5 items-center">
-                      <select
-                        id="trend-timeframe"
-                        onchange="window.renderTrendChart()"
-                        class="text-[11px] font-bold py-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer hover:border-orange-500 transition-colors shadow-sm"
+                    <!-- 💡 ปรับปรุง Controls: เลือกช่วงวันที่แบบอิสระ (Custom Date Picker) -->
+                    <div class="flex gap-2 items-center flex-wrap mt-2 sm:mt-0">
+                      <div
+                        class="flex items-center bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 shadow-sm"
                       >
-                        <option value="day-7">Daily Trend (7 Days)</option>
-                        <option value="day-14">Daily Trend (14 Days)</option>
-                        <option value="day-30">Daily Trend (30 Days)</option>
-                        <option value="week-8" selected>Weekly Trend (8 Weeks)</option>
-                        <option value="week-16">Weekly Trend (16 Weeks)</option>
-                        <option value="month-6">Monthly Trend (6 Months)</option>
-                        <option value="month-12">Monthly Trend (12 Months)</option>
+                        <input
+                          type="date"
+                          id="trend-start-date"
+                          onchange="window.renderTrendChart()"
+                          class="text-[10px] font-bold bg-transparent text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+                        />
+                        <span class="text-slate-400 text-[10px] mx-1">ถึง</span>
+                        <input
+                          type="date"
+                          id="trend-end-date"
+                          onchange="window.renderTrendChart()"
+                          class="text-[10px] font-bold bg-transparent text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+                        />
+                      </div>
+
+                      <select
+                        id="trend-grouping"
+                        onchange="window.renderTrendChart()"
+                        class="text-[10px] font-bold py-1.5 px-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer hover:border-purple-500 transition-colors shadow-sm"
+                      >
+                        <option value="day" selected>รายวัน (Daily)</option>
+                        <option value="week">รายสัปดาห์ (Weekly)</option>
+                        <option value="month">รายเดือน (Monthly)</option>
                       </select>
-                      <div class="w-px h-5 bg-slate-200 dark:bg-slate-700"></div>
+
+                      <div class="w-px h-4 bg-slate-200 dark:bg-slate-700"></div>
                       <button
                         onclick="window.toggleTrendChart()"
-                        class="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                        class="p-1 rounded hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
                       >
                         <i data-lucide="x" class="w-4 h-4"></i>
                       </button>

@@ -324,7 +324,7 @@ export async function fetchRouteDailyTransactions() {
           .select(
             'origin,customer_name,customer_type,product_category,province,zone,truck_type,fwd_agent_desc,ship_to_desc,transaction_date,actual_trips'
           )
-          .order('transaction_date', { ascending: true })
+          //.order('transaction_date', { ascending: true })
           .range(from, to);
 
         if (error) throw error;

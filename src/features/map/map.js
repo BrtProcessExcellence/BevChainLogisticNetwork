@@ -60,15 +60,6 @@ function isValidThailandCoord(lat, lng) {
   return numLat >= 5.5 && numLat <= 20.5 && numLng >= 97.0 && numLng <= 106.0;
 }
 
-function getMapRouteKey(row) {
-  if (!row) return '';
-  const origin = cleanAllSpaces(row['ต้นทาง'] || row.origin);
-  const prov = cleanAllSpaces(row['จังหวัด'] || row.province);
-  let shipTo = cleanAllSpaces(row['Description(Ship-To (Outbound))'] || row.ship_to_desc);
-  if (!shipTo || shipTo === '-') shipTo = prov;
-  return `${origin}__${shipTo}`;
-}
-
 function getThaiProvinceName(enName) {
   if (!enName) return '-';
   const clean = cleanAllSpaces(enName);
