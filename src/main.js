@@ -25,7 +25,15 @@ import {
   drawAllSheetRoutesOnSimMap,
   highlightMapRoute
 } from './features/map/map.js';
-import { formatTrendDateKey, generateTrendTimeKeysInRange, getTrendTimeKey, parseTrendDateKey } from './utils/trend.js';
+import {
+  aggregateTrendByDistinctRoute,
+  calculateDistinctRoutePlanTotals,
+  formatTrendDateKey,
+  getTrendBucketCoverage,
+  generateTrendTimeKeysInRange,
+  parseTrendDateKey,
+  summarizeActualPeriods
+} from './utils/trend.js';
 import { parseNum, formatNum, cleanAllSpaces, escapeHtml, escapeAttr } from './utils/helpers.js';
 
 // ==============================================================================
@@ -125,9 +133,6 @@ window.renderTrendChart = async function () {
   const chartEl = document.querySelector('#chart-route-trend');
   if (!chartEl) return;
 
-  const selectedTimeframe = document.getElementById('trend-grouping')?.value || 'day';
-  const timeframe = ['day', 'week', 'month', 'year'].includes(selectedTimeframe) ? selectedTimeframe : 'day';
-
   // 1. โหลดข้อมูลกราฟและเซ็ตค่าวันที่เริ่มต้น (ค่า Default คือย้อนหลัง 30 วัน)
   if (!window.globalTrendIndex) {
     chartEl.innerHTML = `<div class="flex items-center justify-center h-full text-xs text-slate-400 font-sans animate-pulse">กำลังดึงข้อมูลประวัติการวิ่งงานจริง...</div>`;
@@ -146,12 +151,12 @@ window.renderTrendChart = async function () {
   let endStr = endInput?.value;
   let startStr = startInput?.value;
 
-  // ถ้าเพิ่งเปิดกราฟครั้งแรก ให้ตั้งค่าปฏิทินเป็น 30 วันล่าสุดอัตโนมัติ
+  // ถ้าเพิ่งเปิดกราฟครั้งแรก ให้ตั้งค่าปฏิทินเป็น 365 วันล่าสุดอัตโนมัติ
   if (!endStr && window.globalMaxTrendDate) {
     endStr = window.globalMaxTrendDate;
     const endDate = parseTrendDateKey(endStr);
     if (!endDate) return;
-    endDate.setDate(endDate.getDate() - 30);
+    endDate.setDate(endDate.getDate() - 364);
     startStr = formatTrendDateKey(endDate);
     if (startInput) startInput.value = startStr;
     if (endInput) endInput.value = endStr;
@@ -162,56 +167,28 @@ window.renderTrendChart = async function () {
     window.showToast('กรุณาตรวจสอบช่วงวันที่');
     return;
   }
+  const selectedTimeframe = document.getElementById('trend-grouping')?.value || 'day';
+  const timeframe = ['day', 'month', 'year'].includes(selectedTimeframe) ? selectedTimeframe : 'day';
 
   const routeTxIndex = window.globalTrendIndex || {};
   const activeRoutes = window.currentFilteredData || window.globalRouteSheetData || [];
 
-  // 2. คำนวณ Route ที่กำลัง Filter บนหน้าจอ
-  const exactRowMap = {};
-  let plannedWeeklyTripsSum = 0;
-  let plannedDailyTripsSum = 0;
-
-  for (let i = 0; i < activeRoutes.length; i++) {
-    const p = activeRoutes[i]._parsed;
-    if (!p) continue;
-    if (!exactRowMap[p.rowMatchKey]) exactRowMap[p.rowMatchKey] = { sumAvailPct: 0, count: 0 };
-    exactRowMap[p.rowMatchKey].sumAvailPct += p.availPct;
-    exactRowMap[p.rowMatchKey].count += 1;
-    plannedWeeklyTripsSum += p.trips;
-    plannedDailyTripsSum += p.tripsDay;
-  }
-
-  const baselineValue =
-    timeframe === 'day'
-      ? Number(plannedDailyTripsSum.toFixed(1))
-      : timeframe === 'week'
-        ? Number(plannedWeeklyTripsSum.toFixed(1))
-        : timeframe === 'month'
-          ? Number((plannedWeeklyTripsSum * 4.33).toFixed(1))
-          : Number((plannedWeeklyTripsSum * 52.14).toFixed(1));
-
-  // 3. กรองและรวมยอดตามช่วงวันที่กำหนด (Start Date - End Date)
+  // Group carrier transactions under the same distinct route used by the KPI.
+  const distinctRouteMap = aggregateTrendByDistinctRoute(activeRoutes, routeTxIndex, {
+    startKey: startStr,
+    endKey: endStr,
+    timeframe
+  });
+  const distinctRoutes = Object.values(distinctRouteMap);
+  const distinctRouteCount = distinctRoutes.length;
+  const { baselineValue } = calculateDistinctRoutePlanTotals(distinctRoutes, timeframe);
+  // Aggregate the filtered routes into actual trip totals for the selected timeframe.
   const timeGroupMap = {};
-  const activeRowKeys = Object.keys(exactRowMap);
-
-  for (let i = 0; i < activeRowKeys.length; i++) {
-    const key = activeRowKeys[i];
-    const txList = routeTxIndex[key];
-    if (!txList) continue;
-
-    const matchedStat = exactRowMap[key];
-    const availRatio = matchedStat.sumAvailPct / matchedStat.count / 100;
-
-    for (let j = 0; j < txList.length; j++) {
-      const tx = txList[j];
-      if (tx.d < startStr || tx.d > endStr) continue; // 💡 ข้ามวันที่ไม่อยู่ในช่วงที่เลือก
-
-      const timeKey = getTrendTimeKey(tx.d, timeframe);
-      if (!timeKey) continue;
-
-      if (!timeGroupMap[timeKey]) timeGroupMap[timeKey] = { totalActual: 0, estAvailActual: 0 };
-      timeGroupMap[timeKey].totalActual += tx.v;
-      timeGroupMap[timeKey].estAvailActual += tx.v * availRatio;
+  for (const route of distinctRoutes) {
+    for (const [timeKey, period] of Object.entries(route.periods)) {
+      if (!timeGroupMap[timeKey]) timeGroupMap[timeKey] = { totalActual: 0, estimatedAvailable: 0 };
+      timeGroupMap[timeKey].totalActual += period.totalActual;
+      timeGroupMap[timeKey].estimatedAvailable += period.estimatedAvailable;
     }
   }
 
@@ -219,80 +196,76 @@ window.renderTrendChart = async function () {
   const displayKeys = generateTrendTimeKeysInRange(startStr, endStr, timeframe);
   const categories = [];
   const dataTotal = [];
-  const dataAvail = [];
-  const dataBaseline = [];
-
-  let sumActualPeriod = 0,
-    sumAvailPeriod = 0,
-    peakActualPeriod = 0;
+  const dataBackhaul = [];
+  const dataTarget = [];
 
   displayKeys.forEach((key) => {
+    const stat = timeGroupMap[key] || { totalActual: 0, estimatedAvailable: 0 };
+    const actualVal = Number(stat.totalActual.toFixed(1));
+    const backhaulVal = Number(stat.estimatedAvailable.toFixed(1));
+    const bucketCoverage = getTrendBucketCoverage(key, timeframe, startStr, endStr);
     let label = key;
-    if (timeframe === 'day' || timeframe === 'week') {
+    if (timeframe === 'day') {
       const dateObj = parseTrendDateKey(key);
-      if (dateObj && !isNaN(dateObj.getTime())) {
-        label = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
-        if (timeframe === 'week') label = `W ${label}`;
+      if (dateObj) {
+        label = dateObj
+          .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })
+          .replace(/ /g, '-');
       }
     } else if (timeframe === 'month') {
       const dateObj = parseTrendDateKey(`${key}-01`);
-      if (dateObj && !isNaN(dateObj.getTime())) {
-        label = dateObj.toLocaleDateString('th-TH', { month: 'short', year: 'numeric', calendar: 'gregory' });
-      }
+      if (dateObj) label = dateObj.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
     }
-
-    const stat = timeGroupMap[key] || { totalActual: 0, estAvailActual: 0 };
-    const actualVal = Number(stat.totalActual.toFixed(1));
-    const availVal = Number(stat.estAvailActual.toFixed(1));
-
-    sumActualPeriod += actualVal;
-    sumAvailPeriod += availVal;
-    if (actualVal > peakActualPeriod) peakActualPeriod = actualVal;
 
     categories.push(label);
     dataTotal.push(actualVal);
-    dataAvail.push(availVal);
-    dataBaseline.push(baselineValue);
+    dataBackhaul.push(backhaulVal);
+    dataTarget.push(Number((baselineValue * bucketCoverage).toFixed(1)));
   });
-
-  // 5. อัปเดตตัวเลข Summary Badges บนหัวการ์ด
-  const unitLabel =
-    timeframe === 'day'
-      ? 'trips/day'
-      : timeframe === 'week'
-        ? 'trips/wk'
-        : timeframe === 'month'
-          ? 'trips/mo'
-          : 'trips/yr';
-  const validPeriods = displayKeys.length || 1;
-  const avgActualPerPeriod = sumActualPeriod / validPeriods;
-  const avgAvailPerPeriod = sumAvailPeriod / validPeriods;
+  const periodConfig = {
+    day: {
+      plural: 'Days',
+      adjective: 'Daily',
+      unit: 'trips/day'
+    },
+    month: {
+      plural: 'Months',
+      adjective: 'Monthly',
+      unit: 'trips/month'
+    },
+    year: {
+      plural: 'Years',
+      adjective: 'Yearly',
+      unit: 'trips/year'
+    }
+  }[timeframe];
+  const chartSummary = summarizeActualPeriods(dataTotal);
 
   const setBadgeHtml = (id, html) => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = html;
   };
-  setBadgeHtml(
-    'trend-stat-total',
-    `${Math.round(avgActualPerPeriod).toLocaleString()} ${unitLabel} <span class="font-normal opacity-75">(Sum: ${Math.round(sumActualPeriod).toLocaleString()})</span>`
-  );
-  setBadgeHtml('trend-stat-peak', `${Math.round(peakActualPeriod).toLocaleString()} ${unitLabel}`);
-  setBadgeHtml(
-    'trend-stat-avail',
-    `${Number(avgAvailPerPeriod.toFixed(1)).toLocaleString()} ${unitLabel} <span class="font-normal opacity-75">(Plan: ${baselineValue.toLocaleString()} ${unitLabel})</span>`
-  );
+  setBadgeHtml('trend-stat-total', chartSummary.totalActualTrips.toLocaleString('en-US'));
+  setBadgeHtml('trend-stat-average', Math.round(chartSummary.averageActualPerPeriod).toLocaleString('en-US'));
+  setBadgeHtml('trend-stat-peak', Math.round(chartSummary.peakActualPerPeriod).toLocaleString('en-US'));
+  setBadgeHtml('trend-stat-days', chartSummary.periodsWithData.toLocaleString('en-US'));
+  setBadgeHtml('trend-stat-average-label', `Average ${periodConfig.unit}`);
+  setBadgeHtml('trend-stat-peak-label', `Peak ${periodConfig.unit}`);
+  setBadgeHtml('trend-stat-days-label', `${periodConfig.plural} with Data`);
 
   const subEl = document.getElementById('trend-subtitle-range');
   if (subEl && categories.length > 0) {
-    subEl.innerText = `ข้อมูลตั้งแต่ ${startStr} ถึง ${endStr} (${activeRoutes.length.toLocaleString()} รายการ)`;
+    subEl.innerText = `ข้อมูลตั้งแต่ ${startStr} ถึง ${endStr} (${distinctRouteCount.toLocaleString()} Distinct Routes)`;
   }
 
-  // 6. วาดกราฟ: ใช้กราฟเส้นทึบ (line) แทนที่ area เพื่อเอาสีพื้นหลังทึบๆ ออก พร้อมเปลี่ยนโทนสีใหม่
+  const labelInterval = Math.max(1, Math.ceil(categories.length / 52));
+
+  // 6. วาดกราฟ Actual Trips ตาม timeframe ที่เลือก
   const options = {
     series: [
-      { name: `Actual Volume (${unitLabel})`, type: 'line', data: dataTotal },
-      { name: `Available Backhaul (${unitLabel})`, type: 'line', data: dataAvail },
-      { name: `Table Avg Baseline (${baselineValue.toLocaleString()} ${unitLabel})`, type: 'line', data: dataBaseline }
+      { name: `Actual Volume (${periodConfig.unit})`, type: 'line', data: dataTotal },
+      { name: `Backhaul (${periodConfig.unit})`, type: 'line', data: dataBackhaul },
+      { name: `Target (${periodConfig.unit})`, type: 'line', data: dataTarget }
     ],
     chart: {
       height: '100%',
@@ -301,14 +274,27 @@ window.renderTrendChart = async function () {
       background: 'transparent',
       animations: { enabled: true, easing: 'easeinout', speed: 400 }
     },
-    colors: ['#5bc0eb', '#9bc53d', '#ffba08'],
-    fill: { type: 'solid', opacity: 1 }, // 💡 ปิด Gradient สีดำๆ เทาๆ เป็นสีทึบเส้นปกติ
+    title: {
+      text: `${periodConfig.adjective} Actual Trips`,
+      align: 'center',
+      style: { color: window.state.isDark ? '#e2e8f0' : '#475569', fontSize: '14px', fontWeight: 700 }
+    },
+    colors: ['#156082', '#9bc53d', '#f97316'],
     dataLabels: { enabled: false },
-    stroke: { curve: 'monotoneCubic', width: [3, 3, 2], dashArray: [0, 0, 5] },
-    markers: { size: [3.5, 3.5, 0], hover: { size: 6 } },
+    stroke: { curve: 'smooth', width: [2.5, 2.5, 2], dashArray: [0, 0, 6] },
+    markers: { size: [0, 0, 0], hover: { size: 4 } },
     xaxis: {
       categories: categories,
-      labels: { style: { colors: '#c0c7d1', fontSize: '10px', fontWeight: 600 } },
+      labels: {
+        rotate: -90,
+        rotateAlways: true,
+        hideOverlappingLabels: false,
+        formatter: (value) => {
+          const index = categories.indexOf(value);
+          return index >= 0 && index % labelInterval === 0 ? value : '';
+        },
+        style: { colors: '#64748b', fontSize: '9px', fontWeight: 500 }
+      },
       axisBorder: { show: false },
       axisTicks: { show: false }
     },
@@ -323,14 +309,9 @@ window.renderTrendChart = async function () {
       shared: true,
       intersect: false,
       y: {
-        formatter: function (val, { seriesIndex, dataPointIndex, w }) {
-          if (val === undefined || val === null) return `0 ${unitLabel}`;
-          if (seriesIndex === 1) {
-            const total = w.globals.series[0][dataPointIndex] || 0;
-            const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-            return `${val.toLocaleString()} ${unitLabel} (${pct}% Avail)`;
-          }
-          return `${val.toLocaleString()} ${unitLabel}`;
+        formatter: function (val) {
+          if (val === undefined || val === null) return '0 trips';
+          return `${val.toLocaleString('en-US')} ${periodConfig.unit}`;
         }
       }
     },
@@ -340,7 +321,7 @@ window.renderTrendChart = async function () {
       yaxis: { lines: { show: true } }
     },
     theme: { mode: window.state.isDark ? 'dark' : 'light' },
-    legend: { position: 'top', horizontalAlign: 'right', fontSize: '11px', fontWeight: 700 }
+    legend: { show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px', fontWeight: 700 }
   };
 
   if (window.routeTrendChart) {
