@@ -43,14 +43,125 @@ export function getWeekStartDateStr(dateKey) {
   return formatTrendDateKey(date);
 }
 
+export function getTrendIsoWeekNumber(dateKey) {
+  const date = parseTrendDateKey(dateKey);
+  if (!date) return null;
+
+  const isoDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayOfWeek = isoDate.getUTCDay() || 7;
+  isoDate.setUTCDate(isoDate.getUTCDate() + 4 - dayOfWeek);
+  const yearStart = new Date(Date.UTC(isoDate.getUTCFullYear(), 0, 1));
+  return Math.ceil(((isoDate - yearStart) / 86400000 + 1) / 7);
+}
+
+export function isTrendOnPeakWeek(dateKey) {
+  const weekNumber = getTrendIsoWeekNumber(dateKey);
+  return weekNumber !== null && ((weekNumber >= 10 && weekNumber <= 16) || (weekNumber >= 47 && weekNumber <= 52));
+}
+
+export function calculateTrendPlanBaseline({
+  bucketKey,
+  timeframe,
+  startKey,
+  endKey,
+  weekdays,
+  onPeakWeekly,
+  offPeakWeekly,
+  showOnPeak,
+  showOffPeak
+}) {
+  const rangeStart = parseTrendDateKey(startKey);
+  const rangeEnd = parseTrendDateKey(endKey);
+  if (!rangeStart || !rangeEnd || startKey > endKey) return null;
+
+  const selectedWeekdays = weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  if (timeframe === 'weekday') {
+    if (!selectedWeekdays.includes(bucketKey)) return null;
+
+    let includedDays = 0;
+    let totalDailyBaseline = 0;
+    const current = new Date(rangeStart);
+    while (current <= rangeEnd) {
+      const dateKey = formatTrendDateKey(current);
+      if (getTrendWeekday(dateKey) === bucketKey) {
+        const isOnPeak = isTrendOnPeakWeek(dateKey);
+        if ((isOnPeak && showOnPeak) || (!isOnPeak && showOffPeak)) {
+          totalDailyBaseline += (isOnPeak ? onPeakWeekly : offPeakWeekly) / 7;
+          includedDays += 1;
+        }
+      }
+      current.setDate(current.getDate() + 1);
+    }
+    return includedDays ? totalDailyBaseline / includedDays : null;
+  }
+
+  let bucketStart;
+  let bucketEnd;
+  let periodMultiplier;
+
+  if (timeframe === 'day') {
+    bucketStart = parseTrendDateKey(bucketKey);
+    bucketEnd = bucketStart;
+    periodMultiplier = 1 / 7;
+  } else if (timeframe === 'week') {
+    bucketStart = parseTrendDateKey(bucketKey);
+    bucketEnd = bucketStart && new Date(bucketStart);
+    if (bucketEnd) bucketEnd.setDate(bucketEnd.getDate() + 6);
+    periodMultiplier = 1;
+  } else if (timeframe === 'month') {
+    bucketStart = parseTrendDateKey(`${bucketKey}-01`);
+    if (bucketStart) bucketEnd = new Date(bucketStart.getFullYear(), bucketStart.getMonth() + 1, 0);
+    periodMultiplier = 4.3333;
+  } else if (timeframe === 'year') {
+    bucketStart = parseTrendDateKey(`${bucketKey}-01-01`);
+    if (bucketStart) bucketEnd = parseTrendDateKey(`${bucketKey}-12-31`);
+    periodMultiplier = 52.1429;
+  }
+
+  if (!bucketStart || !bucketEnd) return null;
+
+  const overlapStart = new Date(Math.max(bucketStart.getTime(), rangeStart.getTime()));
+  const overlapEnd = new Date(Math.min(bucketEnd.getTime(), rangeEnd.getTime()));
+  if (overlapStart > overlapEnd) return null;
+
+  let onPeakDays = 0;
+  let offPeakDays = 0;
+  const current = overlapStart;
+  while (current <= overlapEnd) {
+    const dateKey = formatTrendDateKey(current);
+    if (selectedWeekdays.includes(getTrendWeekday(dateKey))) {
+      const isOnPeak = isTrendOnPeakWeek(dateKey);
+      if (isOnPeak && showOnPeak) onPeakDays += 1;
+      if (!isOnPeak && showOffPeak) offPeakDays += 1;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  if (!onPeakDays && !offPeakDays) return null;
+
+  const bucketDays =
+    (Date.UTC(bucketEnd.getFullYear(), bucketEnd.getMonth(), bucketEnd.getDate()) -
+      Date.UTC(bucketStart.getFullYear(), bucketStart.getMonth(), bucketStart.getDate())) /
+      86400000 +
+    1;
+  return ((onPeakWeekly * onPeakDays + offPeakWeekly * offPeakDays) / bucketDays) * periodMultiplier;
+}
+
 export function getTrendTimeKey(dateKey, timeframe) {
   if (!parseTrendDateKey(dateKey)) return null;
 
   if (timeframe === 'day') return dateKey;
+  if (timeframe === 'weekday') return getTrendWeekday(dateKey);
   if (timeframe === 'week') return getWeekStartDateStr(dateKey);
   if (timeframe === 'month') return dateKey.slice(0, 7);
   if (timeframe === 'year') return dateKey.slice(0, 4);
   return null;
+}
+
+export function getTrendWeekday(dateKey) {
+  const date = parseTrendDateKey(dateKey);
+  if (!date) return null;
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
 }
 
 export function summarizeActualPeriods(values) {
@@ -104,7 +215,11 @@ export function getTrendBucketCoverage(bucketKey, timeframe, rangeStartKey, rang
   return overlapDayCount / bucketDayCount;
 }
 
-export function aggregateTrendByDistinctRoute(activeRoutes, routeTxIndex, { startKey, endKey, timeframe }) {
+export function aggregateTrendByDistinctRoute(
+  activeRoutes,
+  routeTxIndex,
+  { startKey, endKey, timeframe, weekdays = null }
+) {
   const distinctRoutes = {};
   const carrierStats = {};
 
@@ -159,6 +274,8 @@ export function aggregateTrendByDistinctRoute(activeRoutes, routeTxIndex, { star
 
     for (const tx of txList) {
       if (tx.d < startKey || tx.d > endKey) continue;
+      const weekday = getTrendWeekday(tx.d);
+      if (weekdays && !weekdays.includes(weekday)) continue;
 
       const timeKey = getTrendTimeKey(tx.d, timeframe);
       if (!timeKey) continue;
@@ -226,7 +343,11 @@ export function generateTrendTimeKeysInRange(startKey, endKey, timeframe) {
       keys.push(formatTrendDateKey(current));
       current.setDate(current.getDate() + 7);
     }
-    return keys;
+    return keys.slice(-52);
+  }
+
+  if (timeframe === 'weekday') {
+    return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   }
 
   if (timeframe === 'month') {

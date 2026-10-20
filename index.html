@@ -1258,7 +1258,8 @@
                           onchange="window.renderTrendChart()"
                           class="text-[10px] font-bold py-1.5 px-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
                         >
-                          <option value="day">Day</option>
+                          <option value="weekday">Day</option>
+                          <option value="week" selected>Week</option>
                           <option value="month">Month</option>
                           <option value="year">Year</option>
                         </select>
@@ -1272,37 +1273,124 @@
                       </div>
                     </div>
 
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
-                      <div
-                        class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-200"
-                      >
-                        <span class="block text-[10px] font-semibold">Total Actual Trips</span>
-                        <strong id="trend-stat-total" class="block text-lg leading-tight font-black">0</strong>
-                      </div>
-                      <div
-                        class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-200"
-                      >
-                        <span id="trend-stat-average-label" class="block text-[10px] font-semibold"
-                          >Average Trips / Day</span
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div id="trend-day-filter" class="flex flex-wrap gap-1" aria-label="Filter by day of week">
+                        <label class="cursor-pointer"
+                          ><input
+                            class="trend-day-filter peer sr-only"
+                            type="checkbox"
+                            value="Sun"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >Sun</span
+                          ></label
                         >
-                        <strong id="trend-stat-average" class="block text-lg leading-tight font-black">0</strong>
+                        <label class="cursor-pointer"
+                          ><input
+                            class="trend-day-filter peer sr-only"
+                            type="checkbox"
+                            value="Mon"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >Mon</span
+                          ></label
+                        >
+                        <label class="cursor-pointer"
+                          ><input
+                            class="trend-day-filter peer sr-only"
+                            type="checkbox"
+                            value="Tue"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >Tue</span
+                          ></label
+                        >
+                        <label class="cursor-pointer"
+                          ><input
+                            class="trend-day-filter peer sr-only"
+                            type="checkbox"
+                            value="Wed"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >Wed</span
+                          ></label
+                        >
+                        <label class="cursor-pointer"
+                          ><input
+                            class="trend-day-filter peer sr-only"
+                            type="checkbox"
+                            value="Thu"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >Thu</span
+                          ></label
+                        >
+                        <label class="cursor-pointer"
+                          ><input
+                            class="trend-day-filter peer sr-only"
+                            type="checkbox"
+                            value="Fri"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >Fri</span
+                          ></label
+                        >
+                        <label class="cursor-pointer"
+                          ><input
+                            class="trend-day-filter peer sr-only"
+                            type="checkbox"
+                            value="Sat"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >Sat</span
+                          ></label
+                        >
                       </div>
-                      <div
-                        class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-200"
-                      >
-                        <span id="trend-stat-peak-label" class="block text-[10px] font-semibold">Peak Trips / Day</span>
-                        <strong id="trend-stat-peak" class="block text-lg leading-tight font-black">0</strong>
-                      </div>
-                      <div
-                        class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-200"
-                      >
-                        <span id="trend-stat-days-label" class="block text-[10px] font-semibold">Days with Data</span>
-                        <strong id="trend-stat-days" class="block text-lg leading-tight font-black">0</strong>
+                      <div class="flex items-center gap-1" aria-label="Show peak and off-peak plans">
+                        <label class="cursor-pointer"
+                          ><input
+                            id="trend-on-peak"
+                            class="peer sr-only"
+                            type="checkbox"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:text-white"
+                            >On Peak</span
+                          ></label
+                        >
+                        <label class="cursor-pointer"
+                          ><input
+                            id="trend-off-peak"
+                            class="peer sr-only"
+                            type="checkbox"
+                            checked
+                            onchange="window.renderTrendChart()"
+                          /><span
+                            class="block rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[10px] font-bold text-slate-500 peer-checked:border-blue-600 peer-checked:bg-blue-600 peer-checked:text-white"
+                            >Off Peak</span
+                          ></label
+                        >
                       </div>
                     </div>
                   </div>
-                  <!-- พื้นที่วาดกราฟ -->
-                  <div class="p-4 pt-2 h-[300px] w-full bg-white/50 dark:bg-zinc-900/50">
+
+                  <!-- พื้นที่วาดกราฟ (ลดความสูงลงเหลือ 260px) -->
+                  <div class="p-4 pt-1 h-[260px] w-full bg-white/50 dark:bg-zinc-900/50">
                     <div id="chart-route-trend" class="w-full h-full"></div>
                   </div>
                 </div>

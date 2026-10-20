@@ -2,11 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { parseNum, cleanAllSpaces, escapeHtml } from '../src/utils/helpers.js'; // 💡 เปลี่ยน Path มาที่นี่
 import {
   aggregateTrendByDistinctRoute,
+  calculateTrendPlanBaseline,
   calculateDistinctRoutePlanTotals,
   generateTrendTimeKeysInRange,
   getTrendBucketCoverage,
+  getTrendIsoWeekNumber,
   getTrendTimeframe,
   getTrendTimeKey,
+  getTrendWeekday,
+  isTrendOnPeakWeek,
   parseTrendDateKey,
   summarizeActualPeriods
 } from '../src/utils/trend.js';
@@ -86,6 +90,82 @@ describe('Trend time helpers', () => {
   it('groups weeks from Monday, including dates that start on Sunday', () => {
     expect(getTrendTimeKey('2026-01-04', 'week')).toBe('2025-12-29');
     expect(generateTrendTimeKeysInRange('2026-01-04', '2026-01-04', 'week')).toEqual(['2025-12-29']);
+  });
+
+  it('groups dates by weekday and limits annual weekly charts to 52 weeks', () => {
+    expect(getTrendWeekday('2026-01-04')).toBe('Sun');
+    expect(generateTrendTimeKeysInRange('2025-10-03', '2026-10-02', 'weekday')).toEqual([
+      'Sun',
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat'
+    ]);
+    expect(generateTrendTimeKeysInRange('2025-10-03', '2026-10-02', 'week')).toHaveLength(52);
+  });
+
+  it('classifies exactly 13 ISO weeks as on-peak', () => {
+    const peakWeeks = Array.from({ length: 52 }, (_, index) => index + 1).filter((weekNumber) => {
+      const monday = new Date(Date.UTC(2025, 0, 6 + (weekNumber - 1) * 7));
+      const dateKey = `${monday.getUTCFullYear()}-${String(monday.getUTCMonth() + 1).padStart(2, '0')}-${String(monday.getUTCDate()).padStart(2, '0')}`;
+      return isTrendOnPeakWeek(dateKey);
+    });
+
+    expect(peakWeeks).toHaveLength(13);
+    expect(getTrendIsoWeekNumber('2026-03-02')).toBe(10);
+    expect(isTrendOnPeakWeek('2026-03-02')).toBe(true);
+    expect(isTrendOnPeakWeek('2026-04-20')).toBe(false);
+    expect(isTrendOnPeakWeek('2026-11-16')).toBe(true);
+    expect(isTrendOnPeakWeek('2026-12-28')).toBe(false);
+  });
+
+  it('uses the selected peak plan for each weekly baseline and removes excluded periods', () => {
+    const baseOptions = {
+      timeframe: 'week',
+      startKey: '2026-03-02',
+      endKey: '2026-03-08',
+      weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      onPeakWeekly: 140,
+      offPeakWeekly: 70,
+      showOnPeak: true,
+      showOffPeak: true
+    };
+
+    expect(calculateTrendPlanBaseline({ ...baseOptions, bucketKey: '2026-03-02' })).toBe(140);
+    expect(
+      calculateTrendPlanBaseline({
+        ...baseOptions,
+        bucketKey: '2026-03-02',
+        weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+      })
+    ).toBe(100);
+    expect(calculateTrendPlanBaseline({ ...baseOptions, bucketKey: '2026-03-02', showOnPeak: false })).toBeNull();
+  });
+
+  it('uses the matching peak plan for daily and weekday baselines', () => {
+    const baselineOptions = {
+      startKey: '2026-03-02',
+      endKey: '2026-03-08',
+      weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      onPeakWeekly: 140,
+      offPeakWeekly: 70,
+      showOnPeak: true,
+      showOffPeak: false
+    };
+
+    expect(calculateTrendPlanBaseline({ ...baselineOptions, timeframe: 'day', bucketKey: '2026-03-02' })).toBe(20);
+    expect(calculateTrendPlanBaseline({ ...baselineOptions, timeframe: 'weekday', bucketKey: 'Mon' })).toBe(20);
+    expect(
+      calculateTrendPlanBaseline({
+        ...baselineOptions,
+        startKey: '2026-04-20',
+        endKey: '2026-04-26',
+        timeframe: 'weekday',
+        bucketKey: 'Sun'
+      })
+    ).toBeNull();
   });
 
   it('rejects invalid calendar dates and reversed ranges', () => {
@@ -185,6 +265,38 @@ describe('Distinct Route trend aggregation', () => {
     });
 
     expect(result['route-a'].periods['2026-01']).toEqual({ totalActual: 100, estimatedAvailable: 10 });
+  });
+
+  it('filters transaction totals by selected weekdays, including an empty selection', () => {
+    const activeRoutes = [
+      {
+        _parsed: {
+          distinctKey: 'route-a',
+          rowMatchKey: 'route-a__carrier-a',
+          trips: 7,
+          tripsDay: 1,
+          availTrips: 7,
+          availTripsDay: 1,
+          availPct: 100
+        }
+      }
+    ];
+    const routeTxIndex = {
+      'route-a__carrier-a': [
+        { d: '2026-01-04', v: 10 },
+        { d: '2026-01-05', v: 20 }
+      ]
+    };
+    const options = { startKey: '2026-01-04', endKey: '2026-01-05', timeframe: 'weekday' };
+
+    const sundayOnly = aggregateTrendByDistinctRoute(activeRoutes, routeTxIndex, {
+      ...options,
+      weekdays: ['Sun']
+    });
+    const noDays = aggregateTrendByDistinctRoute(activeRoutes, routeTxIndex, { ...options, weekdays: [] });
+
+    expect(sundayOnly['route-a'].periods.Sun.totalActual).toBe(10);
+    expect(noDays['route-a'].periods).toEqual({});
   });
 
   it('uses total planned trips across Distinct Routes', () => {

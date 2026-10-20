@@ -26,13 +26,12 @@ import {
   highlightMapRoute
 } from './features/map/map.js';
 import {
-  aggregateTrendByDistinctRoute,
-  calculateDistinctRoutePlanTotals,
+  calculateTrendPlanBaseline,
   formatTrendDateKey,
-  getTrendBucketCoverage,
-  generateTrendTimeKeysInRange,
-  parseTrendDateKey,
-  summarizeActualPeriods
+  getTrendWeekday,
+  getWeekStartDateStr,
+  isTrendOnPeakWeek,
+  parseTrendDateKey
 } from './utils/trend.js';
 import { parseNum, formatNum, cleanAllSpaces, escapeHtml, escapeAttr } from './utils/helpers.js';
 
@@ -133,12 +132,10 @@ window.renderTrendChart = async function () {
   const chartEl = document.querySelector('#chart-route-trend');
   if (!chartEl) return;
 
-  // 1. โหลดข้อมูลกราฟและเซ็ตค่าวันที่เริ่มต้น (ค่า Default คือย้อนหลัง 30 วัน)
   if (!window.globalTrendIndex) {
     chartEl.innerHTML = `<div class="flex items-center justify-center h-full text-xs text-slate-400 font-sans animate-pulse">กำลังดึงข้อมูลประวัติการวิ่งงานจริง...</div>`;
     await ensureTrendDataLoaded();
     chartEl.innerHTML = '';
-
     if (window.routeTrendChart) {
       window.routeTrendChart.destroy();
       window.routeTrendChart = null;
@@ -147,154 +144,338 @@ window.renderTrendChart = async function () {
 
   const startInput = document.getElementById('trend-start-date');
   const endInput = document.getElementById('trend-end-date');
-
   let endStr = endInput?.value;
   let startStr = startInput?.value;
 
-  // ถ้าเพิ่งเปิดกราฟครั้งแรก ให้ตั้งค่าปฏิทินเป็น 365 วันล่าสุดอัตโนมัติ
   if (!endStr && window.globalMaxTrendDate) {
     endStr = window.globalMaxTrendDate;
-    const endDate = parseTrendDateKey(endStr);
-    if (!endDate) return;
-    endDate.setDate(endDate.getDate() - 364);
-    startStr = formatTrendDateKey(endDate);
-    if (startInput) startInput.value = startStr;
-    if (endInput) endInput.value = endStr;
-  }
-
-  if (!startStr || !endStr) return;
-  if (!parseTrendDateKey(startStr) || !parseTrendDateKey(endStr) || startStr > endStr) {
-    window.showToast('กรุณาตรวจสอบช่วงวันที่');
-    return;
-  }
-  const selectedTimeframe = document.getElementById('trend-grouping')?.value || 'day';
-  const timeframe = ['day', 'month', 'year'].includes(selectedTimeframe) ? selectedTimeframe : 'day';
-
-  const routeTxIndex = window.globalTrendIndex || {};
-  const activeRoutes = window.currentFilteredData || window.globalRouteSheetData || [];
-
-  // Group carrier transactions under the same distinct route used by the KPI.
-  const distinctRouteMap = aggregateTrendByDistinctRoute(activeRoutes, routeTxIndex, {
-    startKey: startStr,
-    endKey: endStr,
-    timeframe
-  });
-  const distinctRoutes = Object.values(distinctRouteMap);
-  const distinctRouteCount = distinctRoutes.length;
-  const { baselineValue } = calculateDistinctRoutePlanTotals(distinctRoutes, timeframe);
-  // Aggregate the filtered routes into actual trip totals for the selected timeframe.
-  const timeGroupMap = {};
-  for (const route of distinctRoutes) {
-    for (const [timeKey, period] of Object.entries(route.periods)) {
-      if (!timeGroupMap[timeKey]) timeGroupMap[timeKey] = { totalActual: 0, estimatedAvailable: 0 };
-      timeGroupMap[timeKey].totalActual += period.totalActual;
-      timeGroupMap[timeKey].estimatedAvailable += period.estimatedAvailable;
+    const endDate = new Date(endStr);
+    if (!isNaN(endDate.getTime())) {
+      endDate.setDate(endDate.getDate() - 364);
+      startStr = endDate.toISOString().slice(0, 10);
+      if (startInput) startInput.value = startStr;
+      if (endInput) endInput.value = endStr;
     }
   }
 
-  // 4. สร้างแกน X และเรียงข้อมูล (พล็อตกราฟให้เส้นต่อเนื่องแม้วันหยุด)
-  const displayKeys = generateTrendTimeKeysInRange(startStr, endStr, timeframe);
+  if (!startStr || !endStr || startStr > endStr) return;
+
+  let selectedTimeframe = document.getElementById('trend-grouping')?.value || 'week';
+  if (!['weekday', 'day', 'week', 'month', 'year'].includes(selectedTimeframe)) {
+    selectedTimeframe = 'week';
+  }
+
+  const rawWeekdays = Array.from(document.querySelectorAll('.trend-day-filter:checked'), (input) => input.value);
+  const activeWeekdays = rawWeekdays.length > 0 ? rawWeekdays : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dayRatio = activeWeekdays.length / 7;
+
+  const showOnPeak = document.getElementById('trend-on-peak')?.checked ?? true;
+  const showOffPeak = document.getElementById('trend-off-peak')?.checked ?? true;
+
+  const routeTxIndex = window.globalTrendIndex || {};
+  const activeRoutes = Array.isArray(window.currentFilteredData)
+    ? window.currentFilteredData
+    : window.globalRouteSheetData || [];
+
+  const exactRowMap = {};
+  let tableWeeklyTrips = 0;
+  let onPeakWeekly = 0;
+  let offPeakWeekly = 0;
+
+  activeRoutes.forEach((r) => {
+    const p = r._parsed;
+    if (p) {
+      if (!exactRowMap[p.rowMatchKey]) exactRowMap[p.rowMatchKey] = { sumAvailPct: 0, count: 0 };
+      exactRowMap[p.rowMatchKey].sumAvailPct += p.availPct;
+      exactRowMap[p.rowMatchKey].count += 1;
+
+      tableWeeklyTrips += p.trips;
+      onPeakWeekly += parseNum(r.avg_peak || r['Avg Peak'], 0);
+      offPeakWeekly += parseNum(r.avg_off_peak || r['Avg Off Peak'], 0);
+    }
+  });
+
+  let baselineMultiplier = 1;
+  let unitStr = 'wk';
+
+  if (selectedTimeframe === 'weekday' || selectedTimeframe === 'day') {
+    baselineMultiplier = 1 / 7;
+    unitStr = 'day';
+  } else if (selectedTimeframe === 'week') {
+    baselineMultiplier = 1;
+    unitStr = 'wk';
+  } else if (selectedTimeframe === 'month') {
+    baselineMultiplier = 4.3333;
+    unitStr = 'mo';
+  } else if (selectedTimeframe === 'year') {
+    baselineMultiplier = 52.1429;
+    unitStr = 'yr';
+  }
+
+  const activeBaseline = tableWeeklyTrips * baselineMultiplier;
+  const activeOnPeakBase = onPeakWeekly * baselineMultiplier;
+  const activeOffPeakBase = offPeakWeekly * baselineMultiplier;
+
+  const checkIsPeak = (dateStr) => {
+    if (typeof window.isTrendOnPeakWeek === 'function') {
+      return window.isTrendOnPeakWeek(dateStr);
+    }
+    const d = new Date(dateStr);
+    const firstDay = new Date(d.getFullYear(), 0, 1);
+    const pastDaysOfYear = (d - firstDay) / 86400000;
+    const weekNum = Math.ceil((pastDaysOfYear + firstDay.getDay() + 1) / 7);
+    return (weekNum >= 10 && weekNum <= 16) || (weekNum >= 47 && weekNum <= 52);
+  };
+
+  const weekdayCounts = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
+  const daysArr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  if (selectedTimeframe === 'weekday') {
+    let curD = new Date(startStr);
+    const endD = new Date(endStr);
+    while (curD <= endD) {
+      const dStr = curD.toISOString().slice(0, 10);
+      const isPeak = checkIsPeak(dStr);
+      if ((isPeak && showOnPeak) || (!isPeak && showOffPeak)) {
+        weekdayCounts[daysArr[curD.getDay()]]++;
+      }
+      curD.setDate(curD.getDate() + 1);
+    }
+  }
+
+  const timeGroupMap = {};
+  Object.keys(exactRowMap).forEach((key) => {
+    const txList = routeTxIndex[key];
+    if (!txList) return;
+
+    const matchedStat = exactRowMap[key];
+    const availRatio = matchedStat.sumAvailPct / matchedStat.count / 100;
+
+    txList.forEach((tx) => {
+      if (tx.d < startStr || tx.d > endStr) return;
+
+      const isPeak = checkIsPeak(tx.d);
+      if (isPeak && !showOnPeak) return;
+      if (!isPeak && !showOffPeak) return;
+
+      const dayName = daysArr[new Date(tx.d).getDay()];
+      if (!activeWeekdays.includes(dayName)) return;
+
+      let timeKey = tx.d;
+      if (selectedTimeframe === 'weekday') {
+        timeKey = dayName;
+      } else if (selectedTimeframe === 'week') {
+        const d = new Date(tx.d);
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        timeKey = new Date(d.setDate(diff)).toISOString().slice(0, 10);
+      } else if (selectedTimeframe === 'month') {
+        timeKey = tx.d.slice(0, 7);
+      } else if (selectedTimeframe === 'year') {
+        timeKey = tx.d.slice(0, 4);
+      }
+
+      if (!timeGroupMap[timeKey]) timeGroupMap[timeKey] = { actual: 0, backhaul: 0 };
+      timeGroupMap[timeKey].actual += tx.v;
+      timeGroupMap[timeKey].backhaul += tx.v * availRatio;
+    });
+  });
+
+  let displayKeys = [];
+  const dStart = new Date(startStr);
+  const dEnd = new Date(endStr);
+
+  if (selectedTimeframe === 'weekday') {
+    displayKeys = activeWeekdays;
+  } else if (selectedTimeframe === 'day') {
+    let cur = new Date(dStart);
+    while (cur <= dEnd) {
+      const dStr = cur.toISOString().slice(0, 10);
+      if (activeWeekdays.includes(daysArr[cur.getDay()])) displayKeys.push(dStr);
+      cur.setDate(cur.getDate() + 1);
+    }
+  } else if (selectedTimeframe === 'week') {
+    const getWs = (dt) => {
+      const d = new Date(dt);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      return new Date(d.setDate(diff));
+    };
+    let cur = getWs(startStr);
+    const endW = getWs(endStr);
+    while (cur <= endW) {
+      displayKeys.push(cur.toISOString().slice(0, 10));
+      cur.setDate(cur.getDate() + 7);
+    }
+  } else if (selectedTimeframe === 'month') {
+    let cur = new Date(dStart.getFullYear(), dStart.getMonth(), 1);
+    const endM = new Date(dEnd.getFullYear(), dEnd.getMonth(), 1);
+    while (cur <= endM) {
+      displayKeys.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`);
+      cur.setMonth(cur.getMonth() + 1);
+    }
+  } else if (selectedTimeframe === 'year') {
+    for (let y = dStart.getFullYear(); y <= dEnd.getFullYear(); y++) displayKeys.push(y.toString());
+  }
+
   const categories = [];
   const dataTotal = [];
   const dataBackhaul = [];
-  const dataTarget = [];
+  const dataBaseline = [];
+  const dataOnPeak = [];
+  const dataOffPeak = [];
+
+  // 💡 ตัวแปรสำหรับคำนวณ KPI Cards
+  let sumActualPeriod = 0;
+  let sumBackhaulPeriod = 0;
+  let sumBaselinePeriod = 0;
+  let peakActualPeriod = 0;
+  let lowestActualPeriod = Infinity;
+  let zeroPeriods = 0;
 
   displayKeys.forEach((key) => {
-    const stat = timeGroupMap[key] || { totalActual: 0, estimatedAvailable: 0 };
-    const actualVal = Number(stat.totalActual.toFixed(1));
-    const backhaulVal = Number(stat.estimatedAvailable.toFixed(1));
-    const bucketCoverage = getTrendBucketCoverage(key, timeframe, startStr, endStr);
-    let label = key;
-    if (timeframe === 'day') {
-      const dateObj = parseTrendDateKey(key);
-      if (dateObj) {
-        label = dateObj
-          .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })
-          .replace(/ /g, '-');
-      }
-    } else if (timeframe === 'month') {
-      const dateObj = parseTrendDateKey(`${key}-01`);
-      if (dateObj) label = dateObj.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+    const stat = timeGroupMap[key] || { actual: 0, backhaul: 0 };
+
+    let actualVal = stat.actual;
+    let backhaulVal = stat.backhaul;
+
+    if (selectedTimeframe === 'weekday') {
+      const daysCount = weekdayCounts[key] || 1;
+      actualVal = actualVal / daysCount;
+      backhaulVal = backhaulVal / daysCount;
     }
 
-    categories.push(label);
+    actualVal = Number(actualVal.toFixed(2));
+    backhaulVal = Number(backhaulVal.toFixed(2));
+
+    // สะสมยอดสำหรับ Summary
+    sumActualPeriod += actualVal;
+    sumBackhaulPeriod += backhaulVal;
+    if (actualVal > peakActualPeriod) peakActualPeriod = actualVal;
+    if (actualVal < lowestActualPeriod) lowestActualPeriod = actualVal;
+    if (actualVal === 0) zeroPeriods++;
+
     dataTotal.push(actualVal);
     dataBackhaul.push(backhaulVal);
-    dataTarget.push(Number((baselineValue * bucketCoverage).toFixed(1)));
-  });
-  const periodConfig = {
-    day: {
-      plural: 'Days',
-      adjective: 'Daily',
-      unit: 'trips/day'
-    },
-    month: {
-      plural: 'Months',
-      adjective: 'Monthly',
-      unit: 'trips/month'
-    },
-    year: {
-      plural: 'Years',
-      adjective: 'Yearly',
-      unit: 'trips/year'
-    }
-  }[timeframe];
-  const chartSummary = summarizeActualPeriods(dataTotal);
 
+    const adjustedBaseline = activeBaseline * dayRatio;
+    const adjustedOnPeak = activeOnPeakBase * dayRatio;
+    const adjustedOffPeak = activeOffPeakBase * dayRatio;
+
+    sumBaselinePeriod += adjustedBaseline;
+
+    dataBaseline.push(Number(adjustedBaseline.toFixed(2)));
+
+    if (['day', 'week'].includes(selectedTimeframe)) {
+      const isPeak = checkIsPeak(key);
+      dataOnPeak.push(isPeak ? Number(adjustedOnPeak.toFixed(2)) : null);
+      dataOffPeak.push(!isPeak ? Number(adjustedOffPeak.toFixed(2)) : null);
+    } else {
+      dataOnPeak.push(null);
+      dataOffPeak.push(null);
+    }
+
+    let label = key;
+    if (selectedTimeframe === 'day') {
+      const d = new Date(key);
+      label = d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }).replace(/ /g, '-');
+    } else if (selectedTimeframe === 'week') {
+      // 💡 คำนวณหาหมายเลขสัปดาห์ (ISO Week Number) เพื่อให้โชว์ WK1, WK2...
+      const d = new Date(key);
+      const isoDate = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+      const dayOfWeek = isoDate.getUTCDay() || 7;
+      isoDate.setUTCDate(isoDate.getUTCDate() + 4 - dayOfWeek);
+      const yearStart = new Date(Date.UTC(isoDate.getUTCFullYear(), 0, 1));
+      const weekNum = Math.ceil(((isoDate - yearStart) / 86400000 + 1) / 7);
+      label = `WK${weekNum}`;
+    } else if (selectedTimeframe === 'month') {
+      const d = new Date(`${key}-01`);
+      label = d.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+    }
+    categories.push(label);
+  });
+
+  if (lowestActualPeriod === Infinity) lowestActualPeriod = 0;
+
+  // 💡 คณิตศาสตร์ประมวลผล KPI
+  const avgActual = displayKeys.length > 0 ? sumActualPeriod / displayKeys.length : 0;
+  const achievementPct = sumBaselinePeriod > 0 ? (sumActualPeriod / sumBaselinePeriod) * 100 : 0;
+  const variance = sumActualPeriod - sumBaselinePeriod;
+  const avgCapacityPct = sumBaselinePeriod > 0 ? (sumBackhaulPeriod / sumBaselinePeriod) * 100 : 0;
+  const peakToAvg = avgActual > 0 ? ((peakActualPeriod - avgActual) / avgActual) * 100 : 0;
+
+  const fmtOpts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
   const setBadgeHtml = (id, html) => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = html;
   };
-  setBadgeHtml('trend-stat-total', chartSummary.totalActualTrips.toLocaleString('en-US'));
-  setBadgeHtml('trend-stat-average', Math.round(chartSummary.averageActualPerPeriod).toLocaleString('en-US'));
-  setBadgeHtml('trend-stat-peak', Math.round(chartSummary.peakActualPerPeriod).toLocaleString('en-US'));
-  setBadgeHtml('trend-stat-days', chartSummary.periodsWithData.toLocaleString('en-US'));
-  setBadgeHtml('trend-stat-average-label', `Average ${periodConfig.unit}`);
-  setBadgeHtml('trend-stat-peak-label', `Peak ${periodConfig.unit}`);
-  setBadgeHtml('trend-stat-days-label', `${periodConfig.plural} with Data`);
 
-  const subEl = document.getElementById('trend-subtitle-range');
-  if (subEl && categories.length > 0) {
-    subEl.innerText = `ข้อมูลตั้งแต่ ${startStr} ถึง ${endStr} (${distinctRouteCount.toLocaleString()} Distinct Routes)`;
+  // อัปเดต Card 1: Achievement
+  setBadgeHtml('trend-stat-actual', sumActualPeriod.toLocaleString('en-US', fmtOpts));
+  const achieveColor =
+    achievementPct >= 90
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : achievementPct >= 80
+        ? 'text-amber-500'
+        : 'text-rose-500';
+  const variancePrefix = variance > 0 ? '+' : '';
+  setBadgeHtml(
+    'trend-stat-achieve',
+    `<span class="${achieveColor}">${achievementPct.toLocaleString('en-US', fmtOpts)}% Achieved</span> <span class="text-slate-400 font-normal ml-1">(Var: ${variancePrefix}${variance.toLocaleString('en-US', fmtOpts)})</span>`
+  );
+
+  // อัปเดต Card 2: Backhaul Opportunity
+  setBadgeHtml('trend-stat-backhaul', sumBackhaulPeriod.toLocaleString('en-US', fmtOpts));
+  setBadgeHtml(
+    'trend-stat-capacity',
+    `<span class="text-emerald-600 dark:text-emerald-400">Avg Capacity: ${avgCapacityPct.toLocaleString('en-US', fmtOpts)}%</span>`
+  );
+
+  // อัปเดต Card 3: Volatility
+  setBadgeHtml('trend-stat-peak', peakActualPeriod.toLocaleString('en-US', fmtOpts));
+  setBadgeHtml(
+    'trend-stat-volatility',
+    `<span class="text-slate-500 font-normal">Lowest: ${lowestActualPeriod.toLocaleString('en-US', fmtOpts)}</span> <span class="text-orange-500 ml-1">| Peak-to-Avg: +${peakToAvg.toLocaleString('en-US', fmtOpts)}%</span>`
+  );
+
+  // อัปเดต Card 4: Missing / Zero
+  setBadgeHtml('trend-stat-zero', zeroPeriods.toLocaleString('en-US'));
+  if (zeroPeriods > 0) {
+    setBadgeHtml(
+      'trend-stat-zero-sub',
+      `<span class="text-rose-500 animate-pulse">Needs Review!</span> <span class="text-slate-500 font-normal">(${zeroPeriods} missing data)</span>`
+    );
+  } else {
+    setBadgeHtml('trend-stat-zero-sub', `<span class="text-emerald-500">Perfect Consistency</span>`);
   }
 
-  const labelInterval = Math.max(1, Math.ceil(categories.length / 52));
+  // อัปเดต Units
+  setBadgeHtml('trend-stat-unit1', 'trips');
+  setBadgeHtml('trend-stat-unit2', 'trips');
+  setBadgeHtml('trend-stat-unit3', `trips/${unitStr}`);
 
-  // 6. วาดกราฟ Actual Trips ตาม timeframe ที่เลือก
   const options = {
     series: [
-      { name: `Actual Volume (${periodConfig.unit})`, type: 'line', data: dataTotal },
-      { name: `Backhaul (${periodConfig.unit})`, type: 'line', data: dataBackhaul },
-      { name: `Target (${periodConfig.unit})`, type: 'line', data: dataTarget }
+      { name: `Actual Volume`, type: 'line', data: dataTotal },
+      { name: `Backhaul`, type: 'line', data: dataBackhaul },
+      { name: `Baseline`, type: 'line', data: dataBaseline },
+      ...(showOnPeak ? [{ name: `On Peak Baseline`, type: 'line', data: dataOnPeak }] : []),
+      ...(showOffPeak ? [{ name: `Off Peak Baseline`, type: 'line', data: dataOffPeak }] : [])
     ],
     chart: {
       height: '100%',
       toolbar: { show: false },
       fontFamily: 'Sarabun, sans-serif',
       background: 'transparent',
-      animations: { enabled: true, easing: 'easeinout', speed: 400 }
+      animations: { enabled: true, speed: 400 }
     },
-    title: {
-      text: `${periodConfig.adjective} Actual Trips`,
-      align: 'center',
-      style: { color: window.state.isDark ? '#e2e8f0' : '#475569', fontSize: '14px', fontWeight: 700 }
-    },
-    colors: ['#156082', '#9bc53d', '#f97316'],
+    colors: ['#156082', '#9bc53d', '#f97316', '#dc2626', '#2563eb'],
     dataLabels: { enabled: false },
-    stroke: { curve: 'smooth', width: [2.5, 2.5, 2], dashArray: [0, 0, 6] },
-    markers: { size: [0, 0, 0], hover: { size: 4 } },
+    stroke: { curve: 'monotoneCubic', width: [3, 3, 2, 2, 2], dashArray: [0, 0, 5, 0, 0] },
+    markers: { size: [4, 4, 0, 0, 0], hover: { size: 6 } },
     xaxis: {
       categories: categories,
-      labels: {
-        rotate: -90,
-        rotateAlways: true,
-        hideOverlappingLabels: false,
-        formatter: (value) => {
-          const index = categories.indexOf(value);
-          return index >= 0 && index % labelInterval === 0 ? value : '';
-        },
-        style: { colors: '#64748b', fontSize: '9px', fontWeight: 500 }
-      },
+      labels: { style: { colors: '#64748b', fontSize: '10px', fontWeight: 500 } },
       axisBorder: { show: false },
       axisTicks: { show: false }
     },
@@ -302,7 +483,7 @@ window.renderTrendChart = async function () {
       min: 0,
       labels: {
         style: { colors: '#94a3b8', fontSize: '10px', fontWeight: 600 },
-        formatter: (value) => Math.round(value).toLocaleString()
+        formatter: (value) => Number(value).toLocaleString('en-US', fmtOpts)
       }
     },
     tooltip: {
@@ -310,8 +491,8 @@ window.renderTrendChart = async function () {
       intersect: false,
       y: {
         formatter: function (val) {
-          if (val === undefined || val === null) return '0 trips';
-          return `${val.toLocaleString('en-US')} ${periodConfig.unit}`;
+          if (val === undefined || val === null) return '-';
+          return `${Number(val).toLocaleString('en-US', fmtOpts)} trips/${unitStr}`;
         }
       }
     },
@@ -332,232 +513,6 @@ window.renderTrendChart = async function () {
     window.routeTrendChart.render();
   }
 };
-
-// window.renderTrendChart = async function () {
-//   const chartEl = document.querySelector('#chart-route-trend');
-//   if (!chartEl) return;
-
-//   const rawTimeframe = document.getElementById('trend-timeframe')?.value || 'week-8';
-//   const [timeframe, pointStr] = rawTimeframe.split('-');
-//   const maxPoints = parseInt(pointStr, 10) || 8;
-
-//   // 1. ดึงข้อมูลจาก Supabase หากยังไม่มีในหน่วยความจำ
-//   if (!window.globalProcessedTrendData) {
-//     chartEl.innerHTML = `<div class="flex items-center justify-center h-full text-xs text-slate-400 font-sans animate-pulse">กำลังดึงข้อมูลประวัติการวิ่งงานจริง (Actual Data)...</div>`;
-//     const rawTrend = await fetchRouteDailyTransactions();
-//     window.globalProcessedTrendData = precomputeTrendData(rawTrend);
-
-//     // หา Global Max Date ของระบบทั้งหมดเก็บไว้เป็นมาตรฐานแกนเวลา
-//     window.globalMaxTrendDate = window.globalProcessedTrendData.reduce(
-//       (max, item) => (item.dateStr > max ? item.dateStr : max),
-//       ''
-//     );
-
-//     chartEl.innerHTML = '';
-//     if (window.routeTrendChart) {
-//       window.routeTrendChart.destroy();
-//       window.routeTrendChart = null;
-//     }
-//   }
-
-//   const trendData = window.globalProcessedTrendData || [];
-//   const activeRoutes = window.currentFilteredData || window.globalRouteSheetData || [];
-
-//   // 2. สร้าง Lookup Map ระดับแถว (15,205 แถว) และคำนวณค่าเฉลี่ย Baseline ต่อสัปดาห์
-//   const exactRowMap = {};
-//   let plannedWeeklyTripsSum = 0;
-//   let plannedDailyTripsSum = 0;
-
-//   activeRoutes.forEach((r) => {
-//     const p = r._parsed;
-//     if (p) {
-//       if (!exactRowMap[p.rowMatchKey]) {
-//         exactRowMap[p.rowMatchKey] = { sumAvailPct: 0, count: 0 };
-//       }
-//       exactRowMap[p.rowMatchKey].sumAvailPct += p.availPct;
-//       exactRowMap[p.rowMatchKey].count += 1;
-
-//       plannedWeeklyTripsSum += p.trips;
-//       plannedDailyTripsSum += p.tripsDay;
-//     }
-//   });
-
-//   // คำนวณเส้น Baseline มาตรฐานตาม Timeframe ที่เลือก
-//   const baselineValue =
-//     timeframe === 'day'
-//       ? Number(plannedDailyTripsSum.toFixed(1))
-//       : timeframe === 'week'
-//         ? Number(plannedWeeklyTripsSum.toFixed(1))
-//         : Number((plannedWeeklyTripsSum * 4.33).toFixed(1));
-
-//   // 3. รวมยอด Actual Trips เฉพาะแถวที่ตรงกับในตาราง Route Dashboard
-//   const timeGroupMap = {};
-
-//   trendData.forEach((tx) => {
-//     const matchedStat = exactRowMap[tx.rowMatchKey];
-//     if (!matchedStat) return;
-
-//     const availRatio = matchedStat.sumAvailPct / matchedStat.count / 100;
-//     let timeKey = tx.dateStr;
-
-//     if (timeframe === 'month') {
-//       timeKey = tx.dateStr.slice(0, 7);
-//     } else if (timeframe === 'week') {
-//       timeKey = getWeekStartDateStr(tx.dateStr);
-//     }
-
-//     if (!timeGroupMap[timeKey]) {
-//       timeGroupMap[timeKey] = { totalActual: 0, estAvailActual: 0 };
-//     }
-//     timeGroupMap[timeKey].totalActual += tx.actualTrips;
-//     timeGroupMap[timeKey].estAvailActual += tx.actualTrips * availRatio;
-//   });
-
-//   // 4. ใช้ Global Max Date เป็นจุดยึดเพื่อให้ Timeline ตรงกันเสมอทุกเส้นทาง
-//   const anchorDateStr = window.globalMaxTrendDate || '';
-//   const displayKeys = anchorDateStr ? generateContinuousTimeKeys(anchorDateStr, timeframe, maxPoints) : [];
-
-//   const categories = [];
-//   const dataTotal = [];
-//   const dataAvail = [];
-//   const dataBaseline = [];
-
-//   let sumActualPeriod = 0;
-//   let sumAvailPeriod = 0;
-//   let peakActualPeriod = 0;
-
-//   displayKeys.forEach((key) => {
-//     let label = key;
-//     if (timeframe === 'day' || timeframe === 'week') {
-//       const [y, m, d] = key.split('-').map(Number);
-//       const dateObj = new Date(y, m - 1, d);
-//       if (!isNaN(dateObj.getTime())) {
-//         label = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
-//         if (timeframe === 'week') label = `สัปดาห์ ${label}`;
-//       }
-//     } else if (timeframe === 'month') {
-//       const [y, m] = key.split('-').map(Number);
-//       const dateObj = new Date(y, m - 1, 1);
-//       if (!isNaN(dateObj.getTime())) {
-//         label = dateObj.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
-//       }
-//     }
-
-//     const stat = timeGroupMap[key] || { totalActual: 0, estAvailActual: 0 };
-//     const actualVal = Number(stat.totalActual.toFixed(1));
-//     const availVal = Number(stat.estAvailActual.toFixed(1));
-
-//     sumActualPeriod += actualVal;
-//     sumAvailPeriod += availVal;
-//     if (actualVal > peakActualPeriod) peakActualPeriod = actualVal;
-
-//     categories.push(label);
-//     dataTotal.push(actualVal);
-//     dataAvail.push(availVal);
-//     dataBaseline.push(baselineValue);
-//   });
-
-//   // 5. อัปเดตตัวเลข Summary Badges บนหัวการ์ด ให้มีทั้งยอดรวมและค่าเฉลี่ยเทียบตาราง
-//   const unitLabel = timeframe === 'day' ? 'trips/day' : timeframe === 'week' ? 'trips/wk' : 'trips/mo';
-//   const validPeriods = dataTotal.filter((v) => v > 0).length || 1;
-//   const avgActualPerPeriod = sumActualPeriod / validPeriods;
-//   const avgAvailPerPeriod = sumAvailPeriod / validPeriods;
-
-//   const setBadgeHtml = (id, html) => {
-//     const el = document.getElementById(id);
-//     if (el) el.innerHTML = html;
-//   };
-
-//   // แสดงค่าเฉลี่ยต่อหน่วยเวลาเป็นตัวหลัก (เพื่อให้ตรงกับตารางเวลาเลือก Weekly) และวงเล็บยอดสะสมรวม
-//   setBadgeHtml(
-//     'trend-stat-total',
-//     `${Math.round(avgActualPerPeriod).toLocaleString()} ${unitLabel} <span class="font-normal opacity-75">(Sum: ${Math.round(sumActualPeriod).toLocaleString()})</span>`
-//   );
-//   setBadgeHtml('trend-stat-peak', `${Math.round(peakActualPeriod).toLocaleString()} ${unitLabel}`);
-//   setBadgeHtml(
-//     'trend-stat-avail',
-//     `${Number(avgAvailPerPeriod.toFixed(1)).toLocaleString()} ${unitLabel} <span class="font-normal opacity-75">(Table Avg: ${Number(plannedWeeklyTripsSum > 0 ? activeRoutes.reduce((s, r) => s + (r._parsed?.availTrips || 0), 0) : 0).toFixed(1)}/wk)</span>`
-//   );
-
-//   const subEl = document.getElementById('trend-subtitle-range');
-//   if (subEl && categories.length > 0) {
-//     subEl.innerText = `ข้อมูลตั้งแต่ ${categories[0]} ถึง ${categories[categories.length - 1]} (${activeRoutes.length.toLocaleString()} รายการ • ข้อมูลจริงถึง ${anchorDateStr})`;
-//   }
-
-//   // 6. ตั้งค่าและวาดกราฟ ApexCharts
-//   const options = {
-//     series: [
-//       { name: `Actual Volume (${unitLabel})`, type: 'area', data: dataTotal },
-//       { name: `Available Backhaul (${unitLabel})`, type: 'area', data: dataAvail },
-//       { name: `Table Avg Baseline (${baselineValue.toLocaleString()} ${unitLabel})`, type: 'line', data: dataBaseline }
-//     ],
-//     chart: {
-//       height: '100%',
-//       toolbar: { show: false },
-//       fontFamily: 'Sarabun, sans-serif',
-//       background: 'transparent',
-//       animations: { enabled: true, easing: 'easeinout', speed: 500 }
-//     },
-//     colors: ['#3b82f6', '#10b981', '#f97316'],
-//     fill: {
-//       type: ['gradient', 'gradient', 'solid'],
-//       gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] }
-//     },
-//     dataLabels: { enabled: false },
-//     stroke: {
-//       curve: 'monotoneCubic',
-//       width: [2.5, 2.5, 2],
-//       dashArray: [0, 0, 5]
-//     },
-//     markers: {
-//       size: [3.5, 3.5, 0],
-//       hover: { size: 6 }
-//     },
-//     xaxis: {
-//       categories: categories,
-//       labels: { style: { colors: '#94a3b8', fontSize: '10px', fontWeight: 600 } },
-//       axisBorder: { show: false },
-//       axisTicks: { show: false }
-//     },
-//     yaxis: {
-//       min: 0,
-//       labels: {
-//         style: { colors: '#94a3b8', fontSize: '10px', fontWeight: 600 },
-//         formatter: (value) => Math.round(value).toLocaleString()
-//       }
-//     },
-//     tooltip: {
-//       shared: true,
-//       intersect: false,
-//       y: {
-//         formatter: function (val, { seriesIndex, dataPointIndex, w }) {
-//           if (val === undefined || val === null) return `0 ${unitLabel}`;
-//           if (seriesIndex === 1) {
-//             const total = w.globals.series[0][dataPointIndex] || 0;
-//             const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-//             return `${val.toLocaleString()} ${unitLabel} (${pct}% Avail)`;
-//           }
-//           return `${val.toLocaleString()} ${unitLabel}`;
-//         }
-//       }
-//     },
-//     grid: {
-//       borderColor: window.state.isDark ? '#334155' : '#e2e8f0',
-//       strokeDashArray: 4,
-//       yaxis: { lines: { show: true } }
-//     },
-//     theme: { mode: window.state.isDark ? 'dark' : 'light' },
-//     legend: { position: 'top', horizontalAlign: 'right', fontSize: '11px', fontWeight: 700 }
-//   };
-
-//   if (window.routeTrendChart) {
-//     window.routeTrendChart.updateOptions(options, false, true);
-//     window.routeTrendChart.updateSeries(options.series);
-//   } else {
-//     window.routeTrendChart = new ApexCharts(chartEl, options);
-//     window.routeTrendChart.render();
-//   }
-// };
 
 // 💡 สร้างสะพานเชื่อมให้ HTML ปุ่ม Zoom เข้าถึง Object แผนที่ของ Leaflet ได้
 Object.defineProperty(window, 'dashMap', { get: () => dashMap });
@@ -2183,41 +2138,86 @@ function exportFilteredDataToCSV() {
     window.currentFilteredData && window.currentFilteredData.length > 0
       ? window.currentFilteredData
       : window.globalRouteSheetData;
-  if (!dataToExport || dataToExport.length === 0) return;
+
+  if (!dataToExport || dataToExport.length === 0) {
+    if (window.showToast) window.showToast('ไม่มีข้อมูลสำหรับ Export');
+    return;
+  }
+
+  // 1. กำหนดหัวคอลัมน์
   const headers = [
     'Route ID',
-    'Origin',
-    'Province',
+    'Origin DC',
+    'Destination Province',
     'Zone',
-    'Customer',
-    'Product',
-    'Truck',
-    'Carrier',
-    'Avg Trips/Wk',
-    'Available Backhaul %',
-    'Available Trips'
+    'Customer Name',
+    'Customer Type',
+    'Ship-To Description',
+    'Product Category',
+    'Truck Type',
+    'Carrier Name',
+    'AVG Trips/Week',
+    'Avg Off Peak',
+    'Avg Peak',
+    '% Boonrawd Task',
+    '% Own Task',
+    '% BRF-External Task',
+    'BRF-External Route',
+    'Total Allocated Workload (%)',
+    'Available Capacity (%)',
+    'Available Trips/Week'
   ];
+
   let csvContent = '\uFEFF' + headers.join(',') + '\n';
+
   dataToExport.forEach((row) => {
-    const p = row._parsed;
+    const p = row._parsed || {};
+
+    // 💡 ดึงค่าดั้งเดิมจาก Database แบบ 100% (ไม่แก้ไขฟอร์แมต ตัวพิมพ์เล็ก/ใหญ่ คงเดิม)
+    const getRaw = (keys) => {
+      for (let key of keys) {
+        if (row[key] !== undefined && row[key] !== null) return row[key];
+      }
+      return '';
+    };
+
+    // 2. แมปข้อมูลใส่แต่ละคอลัมน์ (ใช้ getRaw ดึงข้อมูลดิบแทน p.clean)
     const values = [
-      row.id,
-      row.origin,
-      row.province,
-      row.zone,
-      row.customer_name,
-      row.product_category,
-      row.truck_type,
-      row.fwd_agent_desc,
-      p.trips,
-      p.availPct,
-      p.availTrips
+      row.id || '', // Route ID
+      getRaw(['origin', 'ต้นทาง']), // Origin DC (ฟอร์แมตเดิม)
+      getRaw(['province', 'จังหวัด']), // Destination Province (ฟอร์แมตเดิม)
+      getRaw(['zone', 'Zone']), // Zone (ฟอร์แมตเดิม)
+      getRaw(['customer_name', 'ลูกค้า']), // Customer Name (ฟอร์แมตเดิม)
+      getRaw(['customer_type', 'ประเภทลูกค้า']), // Customer Type (ฟอร์แมตเดิม)
+      getRaw(['ship_to_desc', 'Description(Ship-To (Outbound))']), // Ship-To Description (ฟอร์แมตเดิม)
+      getRaw(['product_category', 'ประเภทสินค้า']), // Product Category (ฟอร์แมตเดิม)
+      getRaw(['truck_type', 'ประเภทรถ']), // Truck Type (ฟอร์แมตเดิม)
+      getRaw(['fwd_agent_desc', 'Description(FwdAgent)', 'ผู้รับเหมา']), // Carrier Name (ฟอร์แมตเดิม)
+
+      // ข้อมูลตัวเลข
+      p.trips !== undefined ? p.trips : parseNum(getRaw(['avg_trip_week', 'AVG Trip/Week']), 0),
+      parseNum(getRaw(['avg_off_peak', 'Avg Off Peak']), 0),
+      parseNum(getRaw(['avg_peak', 'Avg Peak']), 0),
+      parseNum(getRaw(['pct_boonrawd', '%รับงานต่อสำหรับงานบุญรอด']), 0),
+      parseNum(getRaw(['pct_own', '%รับงานต่องานของผู้รับเหมาเอง']), 0),
+      parseNum(getRaw(['pct_brf_outside', '%รับงานต่อ สำหรับงานนอกของ BRF']), 0),
+
+      // ข้อความ
+      getRaw(['brf_outside_route', 'ระบุเส้นทางรับงานต่อ สำหรับงานนอกของ BRF (Origin-Destination)']),
+
+      // ข้อมูลการคำนวณที่ผ่านการ parse มาแล้ว
+      p.totalPct !== undefined ? p.totalPct : parseNum(getRaw(['pct_total', 'รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)']), 0),
+      p.availPct !== undefined ? p.availPct : 0,
+      p.availTrips !== undefined ? p.availTrips : 0
     ].map((val) => `"${String(val ?? '').replace(/"/g, '""')}"`);
+
     csvContent += values.join(',') + '\n';
   });
+
+  // 3. สร้างไฟล์และดาวน์โหลด
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
-  link.download = `Export_${new Date().toISOString().slice(0, 10)}.csv`;
+  link.download = `Export_Route_Data_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
