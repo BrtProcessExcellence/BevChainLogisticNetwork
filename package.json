@@ -29,6 +29,7 @@
     "*.js": "eslint --fix"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.117.1"
+    "@supabase/supabase-js": "^2.117.1",
+    "@vercel/speed-insights": "^2.0.0"
   }
 }

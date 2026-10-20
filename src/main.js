@@ -34,6 +34,9 @@ import {
   parseTrendDateKey
 } from './utils/trend.js';
 import { parseNum, formatNum, cleanAllSpaces, escapeHtml, escapeAttr } from './utils/helpers.js';
+import { injectSpeedInsights } from '@vercel/speed-insights';
+
+injectSpeedInsights();
 
 // ==============================================================================
 // 1. GLOBAL STATE & CONSTANTS
