@@ -78,6 +78,7 @@ window.currentGroupKeys = [];
 window.currentGroupMap = {};
 window.provinceLocationMap = {};
 window.originLocationMap = {};
+window.currentTrendChartData = null;
 
 let currentPage = 1;
 
@@ -93,6 +94,7 @@ window.applyDynamicFilters = applyDynamicFilters;
 window.toggleCustomDropdown = toggleCustomDropdown;
 window.resetMapFilters = resetMapFilters;
 window.exportFilteredDataToCSV = exportFilteredDataToCSV;
+window.exportTrendChartToCSV = exportTrendChartToCSV;
 window.analyzeNewOrderMapping = analyzeNewOrderMapping;
 window.backToSimInput = backToSimInput;
 window.filterCarrierCardList = filterCarrierCardList;
@@ -361,7 +363,7 @@ window.renderTrendChart = async function () {
     dataTotal.push(actualVal);
     dataBackhaul.push(backhaulVal);
 
-    const adjustedBaseline = activeBaseline * dayRatio;
+    const adjustedBaseline = selectedTimeframe === 'week' ? activeBaseline : activeBaseline * dayRatio;
     const adjustedOnPeak = activeOnPeakBase * dayRatio;
     const adjustedOffPeak = activeOffPeakBase * dayRatio;
 
@@ -457,14 +459,35 @@ window.renderTrendChart = async function () {
   setBadgeHtml('trend-stat-unit2', 'trips');
   setBadgeHtml('trend-stat-unit3', `trips/${unitStr}`);
 
-  const options = {
-    series: [
-      { name: `Actual Volume`, type: 'line', data: dataTotal },
-      { name: `Backhaul`, type: 'line', data: dataBackhaul },
-      { name: `Baseline`, type: 'line', data: dataBaseline },
-      ...(showOnPeak ? [{ name: `On Peak Baseline`, type: 'line', data: dataOnPeak }] : []),
-      ...(showOffPeak ? [{ name: `Off Peak Baseline`, type: 'line', data: dataOffPeak }] : [])
+  const trendSeries = [
+    { name: 'Actual Volume', data: dataTotal },
+    { name: 'Backhaul', data: dataBackhaul },
+    { name: 'Baseline', data: dataBaseline },
+    ...(showOnPeak ? [{ name: 'On Peak Baseline', data: dataOnPeak }] : []),
+    ...(showOffPeak ? [{ name: 'Off Peak Baseline', data: dataOffPeak }] : [])
+  ];
+
+  window.currentTrendChartData = {
+    headers: [
+      'Period Key',
+      'Period',
+      'Date Range Start',
+      'Date Range End',
+      'Grouping',
+      ...trendSeries.map(({ name }) => `${name} (trips/${unitStr})`)
     ],
+    rows: displayKeys.map((key, index) => [
+      key,
+      categories[index],
+      startStr,
+      endStr,
+      selectedTimeframe,
+      ...trendSeries.map(({ data }) => data[index])
+    ])
+  };
+
+  const options = {
+    series: trendSeries.map((series) => ({ ...series, type: 'line' })),
     chart: {
       height: '100%',
       toolbar: { show: false },
@@ -2224,6 +2247,28 @@ function exportFilteredDataToCSV() {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+}
+
+function exportTrendChartToCSV() {
+  const trendData = window.currentTrendChartData;
+  if (!trendData || trendData.rows.length === 0) {
+    if (window.showToast) window.showToast('ไม่มีข้อมูลกราฟสำหรับ Export');
+    return;
+  }
+
+  const csvContent =
+    '\uFEFF' +
+    [trendData.headers, ...trendData.rows]
+      .map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
+      .join('\r\n');
+  const link = document.createElement('a');
+  const blobUrl = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+  link.href = blobUrl;
+  link.download = `Volume_Trend_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
 }
 
 // ==============================================================================
