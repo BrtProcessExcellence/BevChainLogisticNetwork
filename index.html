@@ -1230,7 +1230,7 @@
                             Volume Trend Analytics
                           </h4>
                           <p id="trend-subtitle-range" class="text-[10px] text-slate-400 font-medium">
-                            Daily actual trips
+                            Actual trips vs. route plan
                           </p>
                         </div>
                       </div>
@@ -1263,6 +1263,14 @@
                           <option value="month">Month</option>
                           <option value="year">Year</option>
                         </select>
+                        <button
+                          onclick="window.exportTrendChartToCSV()"
+                          class="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-emerald-500 cursor-pointer"
+                          title="Export chart data to CSV for Excel"
+                        >
+                          <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                          <span>Export CSV</span>
+                        </button>
                         <button
                           onclick="window.toggleTrendChart()"
                           class="p-1 rounded hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
