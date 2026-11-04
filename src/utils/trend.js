@@ -164,6 +164,46 @@ export function getTrendWeekday(dateKey) {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
 }
 
+export function aggregateTrendPlanByWorkingDays(
+  weeklyPlanTotals,
+  { startKey, endKey, timeframe, weekdays, showOnPeak = true, showOffPeak = true }
+) {
+  const rangeStart = parseTrendDateKey(startKey);
+  const rangeEnd = parseTrendDateKey(endKey);
+  if (!rangeStart || !rangeEnd || startKey > endKey) return {};
+
+  const selectedWeekdays = weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const periods = {};
+  const current = rangeStart;
+
+  while (current <= rangeEnd) {
+    const dateKey = formatTrendDateKey(current);
+    const weekday = getTrendWeekday(dateKey);
+    const isOnPeak = isTrendOnPeakWeek(dateKey);
+
+    if (selectedWeekdays.includes(weekday) && ((isOnPeak && showOnPeak) || (!isOnPeak && showOffPeak))) {
+      const timeKey = getTrendTimeKey(dateKey, timeframe);
+      if (timeKey) {
+        const period = (periods[timeKey] ||= { baseline: 0, onPeak: 0, offPeak: 0 });
+
+        for (const [workingDaysKey, plan] of Object.entries(weeklyPlanTotals)) {
+          const workingDays = Number(workingDaysKey);
+          const isWorkingDay = weekday !== 'Sun' && !(workingDays === 5 && weekday === 'Sat');
+          if (!isWorkingDay || workingDays <= 0) continue;
+
+          period.baseline += plan.total / workingDays;
+          if (isOnPeak) period.onPeak += plan.onPeak / workingDays;
+          else period.offPeak += plan.offPeak / workingDays;
+        }
+      }
+    }
+
+    current.setDate(current.getDate() + 1);
+  }
+
+  return periods;
+}
+
 export function summarizeActualPeriods(values) {
   const totalActualTrips = values.reduce((sum, value) => sum + value, 0);
   const periodsWithData = values.filter((value) => value > 0).length;

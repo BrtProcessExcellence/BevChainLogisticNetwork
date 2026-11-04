@@ -26,10 +26,10 @@ import {
   highlightMapRoute
 } from './features/map/map.js';
 import {
-  calculateTrendPlanBaseline,
+  aggregateTrendPlanByWorkingDays,
   formatTrendDateKey,
   getTrendWeekday,
-  getWeekStartDateStr,
+  getTrendTimeKey,
   isTrendOnPeakWeek,
   parseTrendDateKey
 } from './utils/trend.js';
@@ -172,7 +172,6 @@ window.renderTrendChart = async function () {
 
   const rawWeekdays = Array.from(document.querySelectorAll('.trend-day-filter:checked'), (input) => input.value);
   const activeWeekdays = rawWeekdays.length > 0 ? rawWeekdays : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const dayRatio = activeWeekdays.length / 7;
 
   const showOnPeak = document.getElementById('trend-on-peak')?.checked ?? true;
   const showOffPeak = document.getElementById('trend-off-peak')?.checked ?? true;
@@ -183,9 +182,7 @@ window.renderTrendChart = async function () {
     : window.globalRouteSheetData || [];
 
   const exactRowMap = {};
-  let tableWeeklyTrips = 0;
-  let onPeakWeekly = 0;
-  let offPeakWeekly = 0;
+  const weeklyPlanTotals = {};
 
   activeRoutes.forEach((r) => {
     const p = r._parsed;
@@ -194,55 +191,46 @@ window.renderTrendChart = async function () {
       exactRowMap[p.rowMatchKey].sumAvailPct += p.availPct;
       exactRowMap[p.rowMatchKey].count += 1;
 
-      tableWeeklyTrips += p.trips;
-      onPeakWeekly += parseNum(r.avg_peak || r['Avg Peak'], 0);
-      offPeakWeekly += parseNum(r.avg_off_peak || r['Avg Off Peak'], 0);
+      const workingDays = p.workingDays || 6;
+      if (!weeklyPlanTotals[workingDays]) {
+        weeklyPlanTotals[workingDays] = { total: 0, onPeak: 0, offPeak: 0 };
+      }
+      weeklyPlanTotals[workingDays].total += p.trips;
+      weeklyPlanTotals[workingDays].onPeak += parseNum(r.avg_peak || r['Avg Peak'], 0);
+      weeklyPlanTotals[workingDays].offPeak += parseNum(r.avg_off_peak || r['Avg Off Peak'], 0);
     }
   });
 
-  let baselineMultiplier = 1;
   let unitStr = 'wk';
 
   if (selectedTimeframe === 'weekday' || selectedTimeframe === 'day') {
-    baselineMultiplier = 1 / 7;
     unitStr = 'day';
   } else if (selectedTimeframe === 'week') {
-    baselineMultiplier = 1;
     unitStr = 'wk';
   } else if (selectedTimeframe === 'month') {
-    baselineMultiplier = 4.3333;
     unitStr = 'mo';
   } else if (selectedTimeframe === 'year') {
-    baselineMultiplier = 52.1429;
     unitStr = 'yr';
   }
-
-  const activeBaseline = tableWeeklyTrips * baselineMultiplier;
-  const activeOnPeakBase = onPeakWeekly * baselineMultiplier;
-  const activeOffPeakBase = offPeakWeekly * baselineMultiplier;
 
   const checkIsPeak = (dateStr) => {
     if (typeof window.isTrendOnPeakWeek === 'function') {
       return window.isTrendOnPeakWeek(dateStr);
     }
-    const d = new Date(dateStr);
-    const firstDay = new Date(d.getFullYear(), 0, 1);
-    const pastDaysOfYear = (d - firstDay) / 86400000;
-    const weekNum = Math.ceil((pastDaysOfYear + firstDay.getDay() + 1) / 7);
-    return (weekNum >= 10 && weekNum <= 16) || (weekNum >= 47 && weekNum <= 52);
+    return isTrendOnPeakWeek(dateStr);
   };
 
   const weekdayCounts = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
   const daysArr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   if (selectedTimeframe === 'weekday') {
-    let curD = new Date(startStr);
-    const endD = new Date(endStr);
-    while (curD <= endD) {
-      const dStr = curD.toISOString().slice(0, 10);
+    let curD = parseTrendDateKey(startStr);
+    const endD = parseTrendDateKey(endStr);
+    while (curD && endD && curD <= endD) {
+      const dStr = formatTrendDateKey(curD);
       const isPeak = checkIsPeak(dStr);
       if ((isPeak && showOnPeak) || (!isPeak && showOffPeak)) {
-        weekdayCounts[daysArr[curD.getDay()]]++;
+        weekdayCounts[getTrendWeekday(dStr)]++;
       }
       curD.setDate(curD.getDate() + 1);
     }
@@ -263,27 +251,25 @@ window.renderTrendChart = async function () {
       if (isPeak && !showOnPeak) return;
       if (!isPeak && !showOffPeak) return;
 
-      const dayName = daysArr[new Date(tx.d).getDay()];
+      const dayName = getTrendWeekday(tx.d);
       if (!activeWeekdays.includes(dayName)) return;
 
-      let timeKey = tx.d;
-      if (selectedTimeframe === 'weekday') {
-        timeKey = dayName;
-      } else if (selectedTimeframe === 'week') {
-        const d = new Date(tx.d);
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        timeKey = new Date(d.setDate(diff)).toISOString().slice(0, 10);
-      } else if (selectedTimeframe === 'month') {
-        timeKey = tx.d.slice(0, 7);
-      } else if (selectedTimeframe === 'year') {
-        timeKey = tx.d.slice(0, 4);
-      }
+      const timeKey = getTrendTimeKey(tx.d, selectedTimeframe);
+      if (!timeKey) return;
 
       if (!timeGroupMap[timeKey]) timeGroupMap[timeKey] = { actual: 0, backhaul: 0 };
       timeGroupMap[timeKey].actual += tx.v;
       timeGroupMap[timeKey].backhaul += tx.v * availRatio;
     });
+  });
+
+  const planByPeriod = aggregateTrendPlanByWorkingDays(weeklyPlanTotals, {
+    startKey: startStr,
+    endKey: endStr,
+    timeframe: selectedTimeframe,
+    weekdays: activeWeekdays,
+    showOnPeak,
+    showOffPeak
   });
 
   let displayKeys = [];
@@ -340,18 +326,28 @@ window.renderTrendChart = async function () {
 
   displayKeys.forEach((key) => {
     const stat = timeGroupMap[key] || { actual: 0, backhaul: 0 };
+    const plan = planByPeriod[key] || { baseline: 0, onPeak: 0, offPeak: 0 };
 
     let actualVal = stat.actual;
     let backhaulVal = stat.backhaul;
+    let baselineVal = plan.baseline;
+    let onPeakVal = plan.onPeak;
+    let offPeakVal = plan.offPeak;
 
     if (selectedTimeframe === 'weekday') {
       const daysCount = weekdayCounts[key] || 1;
       actualVal = actualVal / daysCount;
       backhaulVal = backhaulVal / daysCount;
+      baselineVal = baselineVal / daysCount;
+      onPeakVal = onPeakVal / daysCount;
+      offPeakVal = offPeakVal / daysCount;
     }
 
     actualVal = Number(actualVal.toFixed(2));
     backhaulVal = Number(backhaulVal.toFixed(2));
+    baselineVal = Number(baselineVal.toFixed(2));
+    onPeakVal = Number(onPeakVal.toFixed(2));
+    offPeakVal = Number(offPeakVal.toFixed(2));
 
     // สะสมยอดสำหรับ Summary
     sumActualPeriod += actualVal;
@@ -363,18 +359,13 @@ window.renderTrendChart = async function () {
     dataTotal.push(actualVal);
     dataBackhaul.push(backhaulVal);
 
-    const adjustedBaseline = selectedTimeframe === 'week' ? activeBaseline : activeBaseline * dayRatio;
-    const adjustedOnPeak = activeOnPeakBase * dayRatio;
-    const adjustedOffPeak = activeOffPeakBase * dayRatio;
-
-    sumBaselinePeriod += adjustedBaseline;
-
-    dataBaseline.push(Number(adjustedBaseline.toFixed(2)));
+    sumBaselinePeriod += baselineVal;
+    dataBaseline.push(baselineVal);
 
     if (['day', 'week'].includes(selectedTimeframe)) {
       const isPeak = checkIsPeak(key);
-      dataOnPeak.push(isPeak ? Number(adjustedOnPeak.toFixed(2)) : null);
-      dataOffPeak.push(!isPeak ? Number(adjustedOffPeak.toFixed(2)) : null);
+      dataOnPeak.push(isPeak ? onPeakVal : null);
+      dataOffPeak.push(!isPeak ? offPeakVal : null);
     } else {
       dataOnPeak.push(null);
       dataOffPeak.push(null);

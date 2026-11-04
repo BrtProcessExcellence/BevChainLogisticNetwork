@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseNum, cleanAllSpaces, escapeHtml } from '../src/utils/helpers.js'; // 💡 เปลี่ยน Path มาที่นี่
 import {
+  aggregateTrendPlanByWorkingDays,
   aggregateTrendByDistinctRoute,
   calculateTrendPlanBaseline,
   calculateDistinctRoutePlanTotals,
@@ -178,6 +179,43 @@ describe('Trend time helpers', () => {
     expect(getTrendBucketCoverage('2026-01', 'month', '2026-01-15', '2026-02-10')).toBeCloseTo(17 / 31);
     expect(getTrendBucketCoverage('2026-02', 'month', '2026-01-15', '2026-02-10')).toBeCloseTo(10 / 28);
     expect(getTrendBucketCoverage('2026-02', 'month', '2026-03-01', '2026-03-31')).toBe(0);
+  });
+
+  it('distributes weekly plans across each origin working schedule and prorates partial weeks', () => {
+    const weeklyPlanTotals = {
+      5: { total: 100, onPeak: 90, offPeak: 50 },
+      6: { total: 120, onPeak: 60, offPeak: 30 }
+    };
+
+    const fullPeakWeek = aggregateTrendPlanByWorkingDays(weeklyPlanTotals, {
+      startKey: '2026-03-02',
+      endKey: '2026-03-08',
+      timeframe: 'week'
+    });
+    expect(fullPeakWeek['2026-03-02']).toEqual({ baseline: 220, onPeak: 150, offPeak: 0 });
+
+    const partialPeakWeek = aggregateTrendPlanByWorkingDays(weeklyPlanTotals, {
+      startKey: '2026-03-03',
+      endKey: '2026-03-05',
+      timeframe: 'week'
+    });
+    expect(partialPeakWeek['2026-03-02']).toEqual({ baseline: 120, onPeak: 84, offPeak: 0 });
+  });
+
+  it('applies selected weekdays and peak/off-peak filters to the plan', () => {
+    const result = aggregateTrendPlanByWorkingDays(
+      { 5: { total: 100, onPeak: 80, offPeak: 60 } },
+      {
+        startKey: '2026-04-20',
+        endKey: '2026-04-26',
+        timeframe: 'week',
+        weekdays: ['Tue', 'Thu', 'Sun'],
+        showOnPeak: false,
+        showOffPeak: true
+      }
+    );
+
+    expect(result['2026-04-20']).toEqual({ baseline: 40, onPeak: 0, offPeak: 24 });
   });
 });
 
