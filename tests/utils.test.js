@@ -6,12 +6,15 @@ import {
   calculateTrendPlanBaseline,
   calculateDistinctRoutePlanTotals,
   generateTrendTimeKeysInRange,
+  getOriginWorkingDays,
   getTrendBucketCoverage,
   getTrendIsoWeekNumber,
   getTrendTimeframe,
   getTrendTimeKey,
   getTrendWeekday,
   isTrendOnPeakWeek,
+  isTrendWorkingDay,
+  ORIGIN_WORKING_DAYS,
   parseTrendDateKey,
   summarizeActualPeriods
 } from '../src/utils/trend.js';
@@ -53,6 +56,38 @@ describe('Utility Functions', () => {
 });
 
 describe('Trend time helpers', () => {
+  it('uses the configured working-day count for every origin site', () => {
+    expect(ORIGIN_WORKING_DAYS).toEqual({
+      BAB: 5,
+      BBTDC: 6,
+      CMB: 5,
+      HY: 5,
+      KKB: 5,
+      KKRDC: 5,
+      LLKDC: 6,
+      LPRDC: 5,
+      MSB: 5,
+      PTB: 5,
+      SBC: 5,
+      SRB: 5,
+      WN1: 6,
+      WNDC: 6
+    });
+    expect(getOriginWorkingDays(' bbtdc ')).toBe(6);
+    expect(getOriginWorkingDays('BAB')).toBe(5);
+  });
+
+  it('counts Monday through Friday for five-day sites and Monday through Saturday for six-day sites', () => {
+    for (const weekday of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']) {
+      expect(isTrendWorkingDay(weekday, 5)).toBe(true);
+      expect(isTrendWorkingDay(weekday, 6)).toBe(true);
+    }
+    expect(isTrendWorkingDay('Sat', 5)).toBe(false);
+    expect(isTrendWorkingDay('Sat', 6)).toBe(true);
+    expect(isTrendWorkingDay('Sun', 5)).toBe(false);
+    expect(isTrendWorkingDay('Sun', 6)).toBe(false);
+  });
+
   it('chooses chart granularity from the selected date range', () => {
     expect(getTrendTimeframe('2026-01-01', '2026-01-31')).toBe('day');
     expect(getTrendTimeframe('2026-01-01', '2026-03-15')).toBe('week');

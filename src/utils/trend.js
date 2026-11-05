@@ -1,3 +1,34 @@
+export const ORIGIN_WORKING_DAYS = {
+  BAB: 5,
+  BBTDC: 6,
+  CMB: 5,
+  HY: 5,
+  KKB: 5,
+  KKRDC: 5,
+  LLKDC: 6,
+  LPRDC: 5,
+  MSB: 5,
+  PTB: 5,
+  SBC: 5,
+  SRB: 5,
+  WN1: 6,
+  WNDC: 6
+};
+
+export function getOriginWorkingDays(origin) {
+  return (
+    ORIGIN_WORKING_DAYS[
+      String(origin || '')
+        .trim()
+        .toUpperCase()
+    ] ?? 6
+  );
+}
+
+export function isTrendWorkingDay(weekday, workingDays) {
+  return weekday !== 'Sun' && !(workingDays === 5 && weekday === 'Sat');
+}
+
 export function parseTrendDateKey(dateKey) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey || '');
   if (!match) return null;
@@ -188,8 +219,7 @@ export function aggregateTrendPlanByWorkingDays(
 
         for (const [workingDaysKey, plan] of Object.entries(weeklyPlanTotals)) {
           const workingDays = Number(workingDaysKey);
-          const isWorkingDay = weekday !== 'Sun' && !(workingDays === 5 && weekday === 'Sat');
-          if (!isWorkingDay || workingDays <= 0) continue;
+          if (!isTrendWorkingDay(weekday, workingDays) || workingDays <= 0) continue;
 
           period.baseline += plan.total / workingDays;
           if (isOnPeak) period.onPeak += plan.onPeak / workingDays;

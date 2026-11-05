@@ -26,6 +26,7 @@ import {
   highlightMapRoute
 } from './features/map/map.js';
 import {
+  getOriginWorkingDays,
   aggregateTrendPlanByWorkingDays,
   formatTrendDateKey,
   getTrendWeekday,
@@ -41,23 +42,6 @@ injectSpeedInsights();
 // ==============================================================================
 // 1. GLOBAL STATE & CONSTANTS
 // ==============================================================================
-const ORIGIN_WORKING_DAYS = {
-  BAB: 5,
-  BBTDC: 6,
-  CMB: 5,
-  HY: 5,
-  KKB: 5,
-  KKRDC: 5,
-  LLKDC: 6,
-  LPRDC: 5,
-  MSB: 5,
-  PTB: 5,
-  SBC: 5,
-  SRB: 5,
-  WN1: 6,
-  WNDC: 6
-};
-
 const PAGE_SIZE = 50;
 
 window.state = {
@@ -191,7 +175,7 @@ window.renderTrendChart = async function () {
       exactRowMap[p.rowMatchKey].sumAvailPct += p.availPct;
       exactRowMap[p.rowMatchKey].count += 1;
 
-      const workingDays = p.workingDays || 6;
+      const workingDays = p.workingDays ?? getOriginWorkingDays(r.origin || r['ต้นทาง']);
       if (!weeklyPlanTotals[workingDays]) {
         weeklyPlanTotals[workingDays] = { total: 0, onPeak: 0, offPeak: 0 };
       }
@@ -386,7 +370,7 @@ window.renderTrendChart = async function () {
       label = `WK${weekNum}`;
     } else if (selectedTimeframe === 'month') {
       const d = new Date(`${key}-01`);
-      label = d.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+      label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
     }
     categories.push(label);
   });
@@ -598,7 +582,7 @@ function precomputeRouteData(routes) {
     let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
     if (!shipTo || shipTo === '-') shipTo = destProv;
 
-    const workingDays = ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6;
+    const workingDays = getOriginWorkingDays(origin);
     const trips = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
     const tripsDay = trips / workingDays;
 
@@ -816,7 +800,7 @@ window.initAppAfterLogin = async function () {
     window.provinceLocationMap = provData || {};
     window.originLocationMap = originData || {};
 
-    showGlobalLoader('กำลังประมวลผลข้อมูลเส้นทาง...');
+    showGlobalLoader('Loading route data...');
     await yieldToMain();
 
     window.globalRouteSheetData = precomputeRouteData(Array.isArray(routeData) ? routeData : []);
@@ -976,13 +960,11 @@ function calculateExecAnalytics(routeData) {
     const rawFwdAgent = String(row.fwd_agent_desc || row['Description(FwdAgent)'] || row['ผู้รับเหมา'] || '').trim();
 
     const trips = p ? p.trips : parseNum(row.avg_trip_week, 0);
-    const tripsDay = p ? p.tripsDay : trips / (ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6);
+    const tripsDay = p ? p.tripsDay : trips / getOriginWorkingDays(origin);
 
     const availPct = p ? p.availPct : Math.max(0, 100 - parseNum(row.pct_total, 0));
     const rowActualAvailTrips = p ? p.availTrips : trips * (availPct / 100);
-    const rowActualAvailTripsDay = p
-      ? p.availTripsDay
-      : rowActualAvailTrips / (ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6);
+    const rowActualAvailTripsDay = p ? p.availTripsDay : rowActualAvailTrips / getOriginWorkingDays(origin);
 
     result.totalTripsSum += trips;
     result.totalTripsDaySum += tripsDay;
@@ -1291,7 +1273,7 @@ function updateExecNewOrderMappingSection(sourceData) {
     const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
     const zoneName = String(row.zone || row['Zone'] || '').trim();
     if (zoneName && zoneName !== 'undefined' && zoneName !== '-' && zoneName !== 'null') {
-      const workingDays = p ? p.workingDays : ORIGIN_WORKING_DAYS[origin.toUpperCase()] || 6;
+      const workingDays = p ? p.workingDays : getOriginWorkingDays(origin);
       const trips = p ? p.trips : parseNum(row.avg_trip_week, 0);
       const tripsDay = p ? p.tripsDay : trips / workingDays;
 
