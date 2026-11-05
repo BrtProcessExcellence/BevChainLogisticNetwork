@@ -1258,7 +1258,8 @@
                           onchange="window.renderTrendChart()"
                           class="text-[10px] font-bold py-1.5 px-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
                         >
-                          <option value="weekday">Day</option>
+                          <option value="day">Daily Trend (รายวัน)</option>
+                          <option value="weekday">Weekday Pattern (เฉลี่ยตามวันในสัปดาห์)</option>
                           <option value="week" selected>Week</option>
                           <option value="month">Month</option>
                           <option value="year">Year</option>
@@ -1394,6 +1395,70 @@
                           ></label
                         >
                       </div>
+                    </div>
+                  </div>
+                  <!-- 💡 4 SUMMARY CARDS (BUSINESS KPIs) -->
+                  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 px-4 pt-3 pb-1 bg-white/50 dark:bg-zinc-900/50">
+                    <!-- Card 1: Volume Achievement -->
+                    <div
+                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
+                    >
+                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
+                        >Volume Achievement</span
+                      >
+                      <div class="flex items-baseline gap-1.5">
+                        <span id="trend-stat-actual" class="text-lg font-black text-slate-800 dark:text-white"
+                          >0.00</span
+                        >
+                        <span id="trend-stat-unit1" class="text-[9px] text-slate-500 font-bold">trips</span>
+                      </div>
+                      <div id="trend-stat-achieve" class="text-[9px] mt-0.5 font-bold truncate">...</div>
+                    </div>
+
+                    <!-- Card 2: Backhaul Opportunity -->
+                    <div
+                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
+                    >
+                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
+                        >Backhaul Opportunity</span
+                      >
+                      <div class="flex items-baseline gap-1.5">
+                        <span id="trend-stat-backhaul" class="text-lg font-black text-emerald-600 dark:text-emerald-400"
+                          >0.00</span
+                        >
+                        <span id="trend-stat-unit2" class="text-[9px] text-slate-500 font-bold">trips</span>
+                      </div>
+                      <div id="trend-stat-capacity" class="text-[9px] mt-0.5 font-bold truncate">...</div>
+                    </div>
+
+                    <!-- Card 3: Volatility -->
+                    <div
+                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
+                    >
+                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
+                        >Volume Volatility (Peak)</span
+                      >
+                      <div class="flex items-baseline gap-1.5">
+                        <span id="trend-stat-peak" class="text-lg font-black text-orange-500 dark:text-orange-400"
+                          >0.00</span
+                        >
+                        <span id="trend-stat-unit3" class="text-[9px] text-slate-500 font-bold">trips/wk</span>
+                      </div>
+                      <div id="trend-stat-volatility" class="text-[9px] mt-0.5 font-bold truncate">...</div>
+                    </div>
+
+                    <!-- Card 4: Missing/Zero -->
+                    <div
+                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
+                    >
+                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
+                        >Missing / Zero Volume</span
+                      >
+                      <div class="flex items-baseline gap-1.5">
+                        <span id="trend-stat-zero" class="text-lg font-black text-rose-600 dark:text-rose-400">0</span>
+                        <span class="text-[9px] text-slate-500 font-bold">Periods</span>
+                      </div>
+                      <div id="trend-stat-zero-sub" class="text-[9px] mt-0.5 font-bold truncate">...</div>
                     </div>
                   </div>
 

@@ -128,25 +128,20 @@ export function calculateTrendPlanBaseline({
 
   let bucketStart;
   let bucketEnd;
-  let periodMultiplier;
 
   if (timeframe === 'day') {
     bucketStart = parseTrendDateKey(bucketKey);
     bucketEnd = bucketStart;
-    periodMultiplier = 1 / 7;
   } else if (timeframe === 'week') {
     bucketStart = parseTrendDateKey(bucketKey);
     bucketEnd = bucketStart && new Date(bucketStart);
     if (bucketEnd) bucketEnd.setDate(bucketEnd.getDate() + 6);
-    periodMultiplier = 1;
   } else if (timeframe === 'month') {
     bucketStart = parseTrendDateKey(`${bucketKey}-01`);
     if (bucketStart) bucketEnd = new Date(bucketStart.getFullYear(), bucketStart.getMonth() + 1, 0);
-    periodMultiplier = 4.3333;
   } else if (timeframe === 'year') {
     bucketStart = parseTrendDateKey(`${bucketKey}-01-01`);
     if (bucketStart) bucketEnd = parseTrendDateKey(`${bucketKey}-12-31`);
-    periodMultiplier = 52.1429;
   }
 
   if (!bucketStart || !bucketEnd) return null;
@@ -170,12 +165,7 @@ export function calculateTrendPlanBaseline({
 
   if (!onPeakDays && !offPeakDays) return null;
 
-  const bucketDays =
-    (Date.UTC(bucketEnd.getFullYear(), bucketEnd.getMonth(), bucketEnd.getDate()) -
-      Date.UTC(bucketStart.getFullYear(), bucketStart.getMonth(), bucketStart.getDate())) /
-      86400000 +
-    1;
-  return ((onPeakWeekly * onPeakDays + offPeakWeekly * offPeakDays) / bucketDays) * periodMultiplier;
+  return (onPeakWeekly * onPeakDays + offPeakWeekly * offPeakDays) / 7;
 }
 
 export function getTrendTimeKey(dateKey, timeframe) {
@@ -196,7 +186,7 @@ export function getTrendWeekday(dateKey) {
 }
 
 export function aggregateTrendPlanByWorkingDays(
-  weeklyPlanTotals,
+  routePlans,
   { startKey, endKey, timeframe, weekdays, showOnPeak = true, showOffPeak = true }
 ) {
   const rangeStart = parseTrendDateKey(startKey);
@@ -217,11 +207,11 @@ export function aggregateTrendPlanByWorkingDays(
       if (timeKey) {
         const period = (periods[timeKey] ||= { baseline: 0, onPeak: 0, offPeak: 0 });
 
-        for (const [workingDaysKey, plan] of Object.entries(weeklyPlanTotals)) {
-          const workingDays = Number(workingDaysKey);
+        for (const plan of routePlans) {
+          const workingDays = Number(plan.workingDays);
           if (!isTrendWorkingDay(weekday, workingDays) || workingDays <= 0) continue;
 
-          period.baseline += plan.total / workingDays;
+          period.baseline += plan.trips / workingDays;
           if (isOnPeak) period.onPeak += plan.onPeak / workingDays;
           else period.offPeak += plan.offPeak / workingDays;
         }
