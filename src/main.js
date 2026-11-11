@@ -30,6 +30,7 @@ import {
   aggregateTrendPlanByPeriod,
   formatTrendDateKey,
   getFlatTrendBaseline,
+  getTrendSeasonalAverageSeries,
   getTrendIsoWeekNumber,
   getTrendWeekday,
   getTrendTimeKey,
@@ -182,9 +183,7 @@ window.renderTrendChart = async function () {
       stat.sumWeight += weight;
 
       routePlans.push({
-        trips: p.trips,
-        onPeak: parseNum(r.avg_peak || r['Avg Peak'], 0),
-        offPeak: parseNum(r.avg_off_peak || r['Avg Off Peak'], 0)
+        trips: p.trips
       });
     }
   });
@@ -294,6 +293,12 @@ window.renderTrendChart = async function () {
   let dataBaseline = [];
   const dataOnPeak = [];
   const dataOffPeak = [];
+  const seasonalActualSeries = getTrendSeasonalAverageSeries(
+    displayKeys.map((key) => ({
+      actual: timeGroupMap[key]?.actual || 0,
+      category: planByPeriod[key] ? (checkIsPeak(key) ? 'onPeak' : 'offPeak') : null
+    }))
+  );
 
   let sumActualPeriod = 0;
   let sumBackhaulPeriod = 0;
@@ -303,30 +308,24 @@ window.renderTrendChart = async function () {
 
   const supportsPeakSeries = ['day', 'week'].includes(selectedTimeframe);
 
-  displayKeys.forEach((key) => {
+  displayKeys.forEach((key, index) => {
     const stat = timeGroupMap[key] || { actual: 0, backhaul: 0 };
-    const plan = planByPeriod[key] || { baseline: 0, onPeak: 0, offPeak: 0 };
+    const plan = planByPeriod[key] || { baseline: 0 };
 
     let actualVal = stat.actual;
     let backhaulVal = stat.backhaul;
     let baselineVal = plan.baseline;
-    let onPeakVal = plan.onPeak;
-    let offPeakVal = plan.offPeak;
 
     if (selectedTimeframe === 'weekday') {
       const daysCount = weekdayCounts[key] || 1;
       actualVal = actualVal / daysCount;
       backhaulVal = backhaulVal / daysCount;
       baselineVal = baselineVal / daysCount;
-      onPeakVal = onPeakVal / daysCount;
-      offPeakVal = offPeakVal / daysCount;
     }
 
     actualVal = Number(actualVal.toFixed(2));
     backhaulVal = Number(backhaulVal.toFixed(2));
     baselineVal = Number(baselineVal.toFixed(2));
-    onPeakVal = Number(onPeakVal.toFixed(2));
-    offPeakVal = Number(offPeakVal.toFixed(2));
 
     sumActualPeriod += actualVal;
     sumBackhaulPeriod += backhaulVal;
@@ -339,9 +338,8 @@ window.renderTrendChart = async function () {
     sumBaselinePeriod += baselineVal;
     dataBaseline.push(planByPeriod[key] ? baselineVal : null);
     if (supportsPeakSeries) {
-      const isPeak = checkIsPeak(key);
-      dataOnPeak.push(isPeak ? onPeakVal : null);
-      dataOffPeak.push(!isPeak ? offPeakVal : null);
+      dataOnPeak.push(seasonalActualSeries.onPeak[index] ?? null);
+      dataOffPeak.push(seasonalActualSeries.offPeak[index] ?? null);
     }
 
     let label = key;
@@ -419,10 +417,10 @@ window.renderTrendChart = async function () {
     { name: 'Backhaul', data: dataBackhaul, color: '#9bc53d', width: 3, dash: 0, marker: 4 },
     { name: 'Baseline', data: dataBaseline, color: '#f97316', width: 2, dash: 5, marker: 0 },
     ...(supportsPeakSeries && showOnPeak
-      ? [{ name: 'On Peak Baseline', data: dataOnPeak, color: '#dc2626', width: 2, dash: 0, marker: 0 }]
+      ? [{ name: 'On Peak Actual Average', data: dataOnPeak, color: '#dc2626', width: 2, dash: 0, marker: 0 }]
       : []),
     ...(supportsPeakSeries && showOffPeak
-      ? [{ name: 'Off Peak Baseline', data: dataOffPeak, color: '#2563eb', width: 2, dash: 0, marker: 0 }]
+      ? [{ name: 'Off Peak Actual Average', data: dataOffPeak, color: '#2563eb', width: 2, dash: 0, marker: 0 }]
       : [])
   ];
 
