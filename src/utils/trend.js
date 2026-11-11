@@ -185,7 +185,7 @@ export function getTrendWeekday(dateKey) {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
 }
 
-export function aggregateTrendPlanByWorkingDays(
+export function aggregateTrendPlanByPeriod(
   routePlans,
   { startKey, endKey, timeframe, weekdays, showOnPeak = true, showOffPeak = true }
 ) {
@@ -208,12 +208,9 @@ export function aggregateTrendPlanByWorkingDays(
         const period = (periods[timeKey] ||= { baseline: 0, onPeak: 0, offPeak: 0 });
 
         for (const plan of routePlans) {
-          const workingDays = Number(plan.workingDays);
-          if (!isTrendWorkingDay(weekday, workingDays) || workingDays <= 0) continue;
-
-          period.baseline += plan.trips / workingDays;
-          if (isOnPeak) period.onPeak += plan.onPeak / workingDays;
-          else period.offPeak += plan.offPeak / workingDays;
+          period.baseline += plan.trips / 7;
+          if (isOnPeak) period.onPeak += plan.onPeak / 7;
+          else period.offPeak += plan.offPeak / 7;
         }
       }
     }
@@ -222,6 +219,14 @@ export function aggregateTrendPlanByWorkingDays(
   }
 
   return periods;
+}
+
+export function getFlatTrendBaseline(values) {
+  const includedValues = values.filter((value) => value !== null);
+  const average =
+    includedValues.length > 0 ? includedValues.reduce((sum, value) => sum + value, 0) / includedValues.length : null;
+
+  return values.map((value) => (value === null ? null : average));
 }
 
 export function summarizeActualPeriods(values) {

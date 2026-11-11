@@ -47,8 +47,7 @@ export async function signInWithMicrosoft() {
     if (error) throw error;
   } catch (err) {
     console.error('Microsoft Login Error:', err);
-    if (typeof window.showToast === 'function')
-      window.showToast(`Sign-in error: ${err.message || 'Unable to sign in.'}`);
+    if (typeof window.showToast === 'function') window.showToast('Sign-in failed. Please try again.');
     setLoginButtonState('idle');
   }
 }
@@ -164,7 +163,7 @@ export async function initializeAuthSession() {
 
   if (authError) {
     console.error('OAuth Return Error:', authError);
-    if (typeof window.showToast === 'function') window.showToast(`⚠️ Sign-in failed: ${authError}`);
+    if (typeof window.showToast === 'function') window.showToast('⚠️ Sign-in failed. Please try again.');
     showLoginScreen();
     window.history.replaceState({}, document.title, window.location.pathname);
     return;

@@ -52,8 +52,6 @@ function handleApiError(error, contextMessage) {
     userMsg = 'Your session has expired or you do not have permission. Please sign in again.';
   } else if (error?.code === '42P01') {
     userMsg = 'A data structure error occurred (table/view not found).';
-  } else if (error?.message) {
-    userMsg = error.message;
   }
 
   if (typeof window.showToast === 'function') {

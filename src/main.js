@@ -27,8 +27,9 @@ import {
 } from './features/map/map.js';
 import {
   getOriginWorkingDays,
-  aggregateTrendPlanByWorkingDays,
+  aggregateTrendPlanByPeriod,
   formatTrendDateKey,
+  getFlatTrendBaseline,
   getTrendIsoWeekNumber,
   getTrendWeekday,
   getTrendTimeKey,
@@ -120,7 +121,7 @@ window.renderTrendChart = async function () {
   if (!chartEl) return;
 
   if (!window.globalTrendIndex) {
-    chartEl.innerHTML = `<div class="flex items-center justify-center h-full text-xs text-slate-400 font-sans animate-pulse">กำลังดึงข้อมูลประวัติการวิ่งงานจริง...</div>`;
+    chartEl.innerHTML = `<div class="flex items-center justify-center h-full text-xs text-slate-400 font-sans animate-pulse">Loading actual trip history...</div>`;
     await ensureTrendDataLoaded();
     chartEl.innerHTML = '';
     if (window.routeTrendChart) {
@@ -180,9 +181,7 @@ window.renderTrendChart = async function () {
       stat.sumWeightedAvailPct += p.availPct * weight;
       stat.sumWeight += weight;
 
-      const workingDays = p.workingDays ?? getOriginWorkingDays(r.origin || r['ต้นทาง']);
       routePlans.push({
-        workingDays,
         trips: p.trips,
         onPeak: parseNum(r.avg_peak || r['Avg Peak'], 0),
         offPeak: parseNum(r.avg_off_peak || r['Avg Off Peak'], 0)
@@ -248,7 +247,7 @@ window.renderTrendChart = async function () {
     });
   });
 
-  const planByPeriod = aggregateTrendPlanByWorkingDays(routePlans, {
+  const planByPeriod = aggregateTrendPlanByPeriod(routePlans, {
     startKey: startStr,
     endKey: endStr,
     timeframe: selectedTimeframe,
@@ -292,7 +291,7 @@ window.renderTrendChart = async function () {
   const categories = [];
   const dataTotal = [];
   const dataBackhaul = [];
-  const dataBaseline = [];
+  let dataBaseline = [];
   const dataOnPeak = [];
   const dataOffPeak = [];
 
@@ -338,8 +337,7 @@ window.renderTrendChart = async function () {
     dataBackhaul.push(backhaulVal);
 
     sumBaselinePeriod += baselineVal;
-    dataBaseline.push(baselineVal);
-
+    dataBaseline.push(planByPeriod[key] ? baselineVal : null);
     if (supportsPeakSeries) {
       const isPeak = checkIsPeak(key);
       dataOnPeak.push(isPeak ? onPeakVal : null);
@@ -361,6 +359,8 @@ window.renderTrendChart = async function () {
     }
     categories.push(label);
   });
+
+  dataBaseline = getFlatTrendBaseline(dataBaseline);
 
   if (lowestActualPeriod === Infinity) lowestActualPeriod = 0;
 
@@ -505,7 +505,7 @@ window.showToast = function (msg) {
   }
 };
 
-function showGlobalLoader(message = 'กำลังโหลดข้อมูล...') {
+function showGlobalLoader(message = 'Loading data...') {
   const loader = document.getElementById('app-global-loader');
   const textEl = document.getElementById('app-loader-text');
   if (textEl) textEl.textContent = message;
@@ -700,7 +700,7 @@ function ensureTrendDataLoaded() {
 
 window.initAppAfterLogin = async function () {
   console.log('[APP] 🚀 Starting Application Initialization...');
-  showGlobalLoader('กำลังโหลดโครงสร้างระบบ...');
+  showGlobalLoader('Loading application...');
 
   const app = document.getElementById('main-app');
   if (app) app.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
@@ -750,8 +750,8 @@ window.initAppAfterLogin = async function () {
 };
 
 async function forceRefreshRouteData() {
-  window.showToast('กำลังดึงข้อมูลล่าสุดจากฐานข้อมูล...');
-  showGlobalLoader('กำลังรีเฟรชข้อมูล...');
+  window.showToast('Fetching the latest data from the database...');
+  showGlobalLoader('Refreshing data...');
   try {
     sessionStorage.removeItem('cache_routes_data');
     window.globalTrendData = null;
@@ -773,10 +773,10 @@ async function forceRefreshRouteData() {
       }, 800);
     }, 300);
 
-    window.showToast(`รีเฟรชสำเร็จ! ข้อมูล ${window.globalRouteSheetData.length.toLocaleString()} รายการ`);
+    window.showToast(`Refresh successful! ${window.globalRouteSheetData.length.toLocaleString()} records loaded.`);
   } catch (err) {
     hideGlobalLoader();
-    window.showToast('เกิดข้อผิดพลาดในการโหลดข้อมูล');
+    window.showToast('An error occurred while loading data.');
   }
 }
 
@@ -1088,7 +1088,7 @@ function renderExecTruckAvailList(truckAvailMap) {
     .sort((a, b) => b.availRoutes - a.availRoutes);
 
   if (sortedTrucks.length === 0) {
-    truckListEl.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-slate-400 font-sans border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-zinc-900/50">ไม่พบข้อมูลประเภทรถสำหรับจังหวัดที่เลือก</div>`;
+    truckListEl.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-slate-400 font-sans border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-zinc-900/50">No truck type data found for the selected province.</div>`;
     return;
   }
 
@@ -1358,7 +1358,7 @@ function showExecZoneDetailsTable(zoneName) {
   if (badgeEl) badgeEl.innerText = `${matchedRoutes.length.toLocaleString()} Routes`;
 
   if (matchedRoutes.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-slate-400 font-sans">ไม่พบข้อมูลเส้นทางในโซน ${escapeHtml(zoneName)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-slate-400 font-sans">No route data found in zone ${escapeHtml(zoneName)}.</td></tr>`;
   } else {
     tbody.innerHTML = matchedRoutes
       .map((row) => {
@@ -1753,7 +1753,7 @@ function renderTable(filteredData = []) {
   };
 
   if (routeKeys.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-500 font-sans">ไม่พบข้อมูล Route ตามเงื่อนไขตัวกรอง</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-500 font-sans">No routes found for the selected filters.</td></tr>`;
     setText('ops-count', '0');
     setText('ops-avail-groups', '0');
     setText('ops-unavail-groups', '0');
@@ -2029,7 +2029,7 @@ function focusTableRowByMapKey(mapKey) {
       : window.globalRouteSheetData;
   const matchedRows = sourceData.filter((row) => row._parsed.mapRouteKey === mapKey);
   if (matchedRows.length === 0) {
-    window.showToast(`⚠️ ไม่พบข้อมูลในตารางสำหรับเส้นทางนี้`);
+    window.showToast('⚠️ No table data found for this route.');
     return;
   }
   currentPage = 1;
@@ -2048,7 +2048,7 @@ function filterTableByOrigin(originName) {
   const cleanTargetOrigin = cleanAllSpaces(originName);
   const matchedRows = window.globalRouteSheetData.filter((row) => row._parsed.cleanOrigin.includes(cleanTargetOrigin));
   if (matchedRows.length === 0) {
-    window.showToast(`⚠️ ไม่พบข้อมูลเส้นทางสำหรับต้นทาง: ${originName}`);
+    window.showToast(`⚠️ No route data found for origin: ${originName}`);
     return;
   }
   currentPage = 1;
@@ -2066,7 +2066,7 @@ function exportFilteredDataToCSV() {
       : window.globalRouteSheetData;
 
   if (!dataToExport || dataToExport.length === 0) {
-    if (window.showToast) window.showToast('ไม่มีข้อมูลสำหรับ Export');
+    if (window.showToast) window.showToast('No data available to export.');
     return;
   }
 

@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { parseNum, cleanAllSpaces, escapeHtml } from '../src/utils/helpers.js'; // 💡 เปลี่ยน Path มาที่นี่
 import {
-  aggregateTrendPlanByWorkingDays,
+  aggregateTrendPlanByPeriod,
   aggregateTrendByDistinctRoute,
   calculateTrendPlanBaseline,
   calculateDistinctRoutePlanTotals,
   generateTrendTimeKeysInRange,
+  getFlatTrendBaseline,
   getOriginWorkingDays,
   getTrendBucketCoverage,
   getTrendIsoWeekNumber,
@@ -157,8 +158,14 @@ describe('Trend time helpers', () => {
     expect(peakWeeks).toHaveLength(13);
     expect(getTrendIsoWeekNumber('2026-03-02')).toBe(10);
     expect(isTrendOnPeakWeek('2026-03-02')).toBe(true);
+    expect(getTrendIsoWeekNumber('2026-04-13')).toBe(16);
+    expect(isTrendOnPeakWeek('2026-04-13')).toBe(true);
     expect(isTrendOnPeakWeek('2026-04-20')).toBe(false);
+    expect(getTrendIsoWeekNumber('2026-11-09')).toBe(46);
+    expect(isTrendOnPeakWeek('2026-11-09')).toBe(false);
     expect(isTrendOnPeakWeek('2026-11-16')).toBe(true);
+    expect(getTrendIsoWeekNumber('2026-12-21')).toBe(52);
+    expect(isTrendOnPeakWeek('2026-12-21')).toBe(true);
     expect(isTrendOnPeakWeek('2026-12-28')).toBe(false);
   });
 
@@ -249,65 +256,70 @@ describe('Trend time helpers', () => {
     expect(getTrendBucketCoverage('2026-02', 'month', '2026-03-01', '2026-03-31')).toBe(0);
   });
 
-  it('distributes each route plan only across that route working days', () => {
+  it('distributes weekly plans evenly across calendar days and uses peak plans in their ISO weeks', () => {
     const routePlans = [
-      { workingDays: 5, trips: 100, onPeak: 90, offPeak: 50 },
-      { workingDays: 6, trips: 120, onPeak: 60, offPeak: 30 }
+      { trips: 100, onPeak: 90, offPeak: 50 },
+      { trips: 120, onPeak: 60, offPeak: 30 }
     ];
 
-    const fullPeakWeek = aggregateTrendPlanByWorkingDays(routePlans, {
+    const fullPeakWeek = aggregateTrendPlanByPeriod(routePlans, {
       startKey: '2026-03-02',
       endKey: '2026-03-08',
       timeframe: 'week'
     });
-    expect(fullPeakWeek['2026-03-02']).toEqual({ baseline: 220, onPeak: 150, offPeak: 0 });
+    expect(fullPeakWeek['2026-03-02'].baseline).toBeCloseTo(220);
+    expect(fullPeakWeek['2026-03-02'].onPeak).toBeCloseTo(150);
+    expect(fullPeakWeek['2026-03-02'].offPeak).toBe(0);
 
-    const partialPeakWeek = aggregateTrendPlanByWorkingDays(routePlans, {
+    const partialPeakWeek = aggregateTrendPlanByPeriod(routePlans, {
       startKey: '2026-03-03',
       endKey: '2026-03-05',
       timeframe: 'week'
     });
-    expect(partialPeakWeek['2026-03-02']).toEqual({ baseline: 120, onPeak: 84, offPeak: 0 });
+    expect(partialPeakWeek['2026-03-02'].baseline).toBeCloseTo((220 * 3) / 7);
+    expect(partialPeakWeek['2026-03-02'].onPeak).toBeCloseTo((150 * 3) / 7);
+    expect(partialPeakWeek['2026-03-02'].offPeak).toBe(0);
   });
 
-  it('keeps Saturday baseline only for six-day sites and sets Sunday baseline to zero', () => {
+  it('includes Saturday and Sunday without applying working-day adjustments', () => {
     const routePlans = [
-      { workingDays: 5, trips: 100, onPeak: 50, offPeak: 50 },
-      { workingDays: 6, trips: 120, onPeak: 60, offPeak: 60 }
+      { trips: 100, onPeak: 50, offPeak: 50 },
+      { trips: 120, onPeak: 60, offPeak: 60 }
     ];
-    const result = aggregateTrendPlanByWorkingDays(routePlans, {
+    const result = aggregateTrendPlanByPeriod(routePlans, {
       startKey: '2026-03-07',
       endKey: '2026-03-08',
       timeframe: 'day'
     });
 
-    expect(result['2026-03-07']).toEqual({ baseline: 20, onPeak: 10, offPeak: 0 });
-    expect(result['2026-03-08']).toEqual({ baseline: 0, onPeak: 0, offPeak: 0 });
+    expect(result['2026-03-07'].baseline).toBeCloseTo(220 / 7);
+    expect(result['2026-03-07'].onPeak).toBeCloseTo(110 / 7);
+    expect(result['2026-03-08']).toEqual(result['2026-03-07']);
   });
 
-  it('sums daily working-day baselines across exact calendar months and years', () => {
+  it('sums even daily baselines across exact calendar months and years', () => {
     const routePlans = [
-      { workingDays: 5, trips: 100, onPeak: 50, offPeak: 50 },
-      { workingDays: 6, trips: 120, onPeak: 60, offPeak: 60 }
+      { trips: 100, onPeak: 50, offPeak: 50 },
+      { trips: 120, onPeak: 60, offPeak: 60 }
     ];
 
-    const february = aggregateTrendPlanByWorkingDays(routePlans, {
+    const february = aggregateTrendPlanByPeriod(routePlans, {
       startKey: '2026-02-01',
       endKey: '2026-02-28',
       timeframe: 'month'
     });
-    expect(february['2026-02'].baseline).toBe(880);
+    expect(february['2026-02'].baseline).toBeCloseTo(880);
 
-    const year = aggregateTrendPlanByWorkingDays(routePlans, {
+    const year = aggregateTrendPlanByPeriod(routePlans, {
       startKey: '2026-01-01',
       endKey: '2026-12-31',
       timeframe: 'year'
     });
-    expect(year['2026'].baseline).toBe(11480);
+    expect(year['2026'].baseline).toBeCloseTo((220 * 365) / 7);
   });
 
   it('applies selected weekdays and peak/off-peak filters to the plan', () => {
-    const result = aggregateTrendPlanByWorkingDays([{ workingDays: 5, trips: 100, onPeak: 80, offPeak: 60 }], {
+    const result = aggregateTrendPlanByPeriod([{ trips: 100, onPeak: 80, offPeak: 60 }], {
       startKey: '2026-04-20',
       endKey: '2026-04-26',
       timeframe: 'week',
@@ -316,7 +328,13 @@ describe('Trend time helpers', () => {
       showOffPeak: true
     });
 
-    expect(result['2026-04-20']).toEqual({ baseline: 40, onPeak: 0, offPeak: 24 });
+    expect(result['2026-04-20'].baseline).toBeCloseTo((100 * 3) / 7);
+    expect(result['2026-04-20'].onPeak).toBe(0);
+    expect(result['2026-04-20'].offPeak).toBeCloseTo((60 * 3) / 7);
+  });
+
+  it('flattens the baseline across visible periods while leaving excluded periods empty', () => {
+    expect(getFlatTrendBaseline([10, 30, null])).toEqual([20, 20, null]);
   });
 });
 
