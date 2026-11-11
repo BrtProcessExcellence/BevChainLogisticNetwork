@@ -315,13 +315,12 @@ window.renderTrendChart = async function () {
     let offPeakVal = plan.offPeak;
 
     if (selectedTimeframe === 'weekday') {
-      const totalSelectedDays = Math.max(1, Math.round((dEnd - dStart) / 86400000) + 1);
-      const standardWeeks = totalSelectedDays >= 360 && totalSelectedDays <= 372 ? 52 : weekdayCounts[key] || 1;
-      actualVal = actualVal / standardWeeks;
-      backhaulVal = backhaulVal / standardWeeks;
-      baselineVal = baselineVal / (weekdayCounts[key] || 1);
-      onPeakVal = onPeakVal / (weekdayCounts[key] || 1);
-      offPeakVal = offPeakVal / (weekdayCounts[key] || 1);
+      const daysCount = weekdayCounts[key] || 1;
+      actualVal = actualVal / daysCount;
+      backhaulVal = backhaulVal / daysCount;
+      baselineVal = baselineVal / daysCount;
+      onPeakVal = onPeakVal / daysCount;
+      offPeakVal = offPeakVal / daysCount;
     }
 
     actualVal = Number(actualVal.toFixed(2));
