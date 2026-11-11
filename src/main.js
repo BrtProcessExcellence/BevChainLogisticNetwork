@@ -63,8 +63,6 @@ window.currentGroupKeys = [];
 window.currentGroupMap = {};
 window.provinceLocationMap = {};
 window.originLocationMap = {};
-window.currentTrendChartData = null;
-
 let currentPage = 1;
 
 let searchDebounceTimer = null;
@@ -79,7 +77,6 @@ window.applyDynamicFilters = applyDynamicFilters;
 window.toggleCustomDropdown = toggleCustomDropdown;
 window.resetMapFilters = resetMapFilters;
 window.exportFilteredDataToCSV = exportFilteredDataToCSV;
-window.exportTrendChartToCSV = exportTrendChartToCSV;
 window.analyzeNewOrderMapping = analyzeNewOrderMapping;
 window.backToSimInput = backToSimInput;
 window.filterCarrierCardList = filterCarrierCardList;
@@ -304,7 +301,6 @@ window.renderTrendChart = async function () {
   let sumBaselinePeriod = 0;
   let peakActualPeriod = 0;
   let lowestActualPeriod = Infinity;
-  let zeroPeriods = 0;
 
   const supportsPeakSeries = ['day', 'week'].includes(selectedTimeframe);
 
@@ -337,7 +333,6 @@ window.renderTrendChart = async function () {
     sumBackhaulPeriod += backhaulVal;
     if (actualVal > peakActualPeriod) peakActualPeriod = actualVal;
     if (actualVal < lowestActualPeriod) lowestActualPeriod = actualVal;
-    if (actualVal === 0) zeroPeriods++;
 
     dataTotal.push(actualVal);
     dataBackhaul.push(backhaulVal);
@@ -413,16 +408,6 @@ window.renderTrendChart = async function () {
     `<span class="text-slate-500 font-normal">Lowest: ${lowestActualPeriod.toLocaleString('en-US', fmtOpts)}</span> <span class="text-orange-500 ml-1">| Peak-to-Avg: +${peakToAvg.toLocaleString('en-US', fmtOpts)}%</span>`
   );
 
-  setBadgeHtml('trend-stat-zero', zeroPeriods.toLocaleString('en-US'));
-  if (zeroPeriods > 0) {
-    setBadgeHtml(
-      'trend-stat-zero-sub',
-      `<span class="text-rose-500 animate-pulse">Needs Review!</span> <span class="text-slate-500 font-normal">(${zeroPeriods} missing data)</span>`
-    );
-  } else {
-    setBadgeHtml('trend-stat-zero-sub', `<span class="text-emerald-500">Perfect Consistency</span>`);
-  }
-
   const cumulativeUnit = selectedTimeframe === 'weekday' ? 'trips/wk (avg)' : 'trips';
   setBadgeHtml('trend-stat-unit1', cumulativeUnit);
   setBadgeHtml('trend-stat-unit2', cumulativeUnit);
@@ -440,25 +425,6 @@ window.renderTrendChart = async function () {
       ? [{ name: 'Off Peak Baseline', data: dataOffPeak, color: '#2563eb', width: 2, dash: 0, marker: 0 }]
       : [])
   ];
-
-  window.currentTrendChartData = {
-    headers: [
-      'Period Key',
-      'Period',
-      'Date Range Start',
-      'Date Range End',
-      'Grouping',
-      ...trendSeries.map(({ name }) => `${name} (trips/${unitStr})`)
-    ],
-    rows: displayKeys.map((key, index) => [
-      key,
-      categories[index],
-      startStr,
-      endStr,
-      selectedTimeframe,
-      ...trendSeries.map(({ data }) => data[index] ?? '')
-    ])
-  };
 
   const options = {
     series: trendSeries.map(({ name, data }) => ({ name, data, type: 'line' })),
@@ -652,57 +618,6 @@ function precomputeRouteData(routes) {
   });
 }
 
-// function precomputeTrendData(trendRows) {
-//   if (!Array.isArray(trendRows) || trendRows.length === 0) return [];
-//   return trendRows
-//     .map((row) => {
-//       const origin = String(row.origin || row['ต้นทาง'] || '-').trim();
-//       const destProv = String(row.province || row['จังหวัด'] || '-').trim();
-//       let shipTo = String(row.ship_to_desc || row['Description(Ship-To (Outbound))'] || '').trim();
-//       if (!shipTo || shipTo === '-') shipTo = destProv;
-
-//       const cleanOrigin = cleanAllSpaces(origin);
-//       const cleanCustomer = cleanAllSpaces(row.customer_name || row['ลูกค้า'] || '-');
-//       const cleanCustomerType = cleanAllSpaces(row.customer_type || row['ประเภทลูกค้า'] || '-');
-//       const cleanProduct = cleanAllSpaces(row.product_category || row['ประเภทสินค้า'] || '-');
-//       const cleanProv = cleanAllSpaces(destProv);
-//       const cleanZone = cleanAllSpaces(row.zone || row['Zone'] || '-');
-//       const cleanTruck = cleanAllSpaces(row.truck_type || row['ประเภทรถ'] || '-');
-//       const cleanShipTo = cleanAllSpaces(shipTo);
-//       const cleanCarrier = cleanAllSpaces(row.fwd_agent_desc || row['Description(FwdAgent)'] || '-');
-
-//       const distinctKey = [
-//         cleanOrigin,
-//         cleanCustomer,
-//         cleanCustomerType,
-//         cleanProduct,
-//         cleanProv,
-//         cleanZone,
-//         cleanTruck,
-//         cleanShipTo
-//       ].join('__');
-
-//       const rowMatchKey = `${distinctKey}__${cleanCarrier}`;
-
-//       const actualTrips = parseNum(row.actual_trips, 0);
-//       const dateStr = String(row.transaction_date || '').trim();
-
-//       return {
-//         distinctKey,
-//         rowMatchKey,
-//         dateStr,
-//         actualTrips
-//       };
-//     })
-//     .filter((item) => item.dateStr && item.actualTrips > 0);
-// }
-
-// ==============================================================================
-// 4. APP INITIALIZATION
-// ==============================================================================
-
-// 💡 ระบบจำคำศัพท์ (Memoization Cache) ป้องกันการรัน Regex ซ้ำหลายล้านครั้ง
-
 const cleanStrCache = new Map();
 function fastClean(val) {
   if (!val) return '-';
@@ -731,27 +646,30 @@ function precomputeTrendData(trendRows) {
     if (!dateStr) continue;
     if (dateStr > globalMaxDate) globalMaxDate = dateStr;
 
-    const destProv = row.province || '-';
-    const shipTo = row.ship_to_desc && row.ship_to_desc !== '-' ? row.ship_to_desc : destProv;
-
-    const rowMatchKey =
-      fastClean(row.origin) +
-      '__' +
-      fastClean(row.customer_name) +
-      '__' +
-      fastClean(row.customer_type) +
-      '__' +
-      fastClean(row.product_category) +
-      '__' +
-      fastClean(destProv) +
-      '__' +
-      fastClean(row.zone) +
-      '__' +
-      fastClean(row.truck_type) +
-      '__' +
-      fastClean(shipTo) +
-      '__' +
-      fastClean(row.fwd_agent_desc);
+    // 💡 ถ้าดึงมาจาก view_route_daily_compact จะมี row_match_key พร้อมใช้งานทันที
+    let rowMatchKey = row.row_match_key;
+    if (!rowMatchKey) {
+      const destProv = row.province || '-';
+      const shipTo = row.ship_to_desc && row.ship_to_desc !== '-' ? row.ship_to_desc : destProv;
+      rowMatchKey =
+        fastClean(row.origin) +
+        '__' +
+        fastClean(row.customer_name) +
+        '__' +
+        fastClean(row.customer_type) +
+        '__' +
+        fastClean(row.product_category) +
+        '__' +
+        fastClean(destProv) +
+        '__' +
+        fastClean(row.zone) +
+        '__' +
+        fastClean(row.truck_type) +
+        '__' +
+        fastClean(shipTo) +
+        '__' +
+        fastClean(row.fwd_agent_desc);
+    }
 
     if (!routeTxIndex[rowMatchKey]) {
       routeTxIndex[rowMatchKey] = [];
@@ -2229,28 +2147,6 @@ function exportFilteredDataToCSV() {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-}
-
-function exportTrendChartToCSV() {
-  const trendData = window.currentTrendChartData;
-  if (!trendData || trendData.rows.length === 0) {
-    if (window.showToast) window.showToast('ไม่มีข้อมูลกราฟสำหรับ Export');
-    return;
-  }
-
-  const csvContent =
-    '\uFEFF' +
-    [trendData.headers, ...trendData.rows]
-      .map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
-      .join('\r\n');
-  const link = document.createElement('a');
-  const blobUrl = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
-  link.href = blobUrl;
-  link.download = `Volume_Trend_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
 }
 
 // ==============================================================================

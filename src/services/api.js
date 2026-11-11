@@ -313,35 +313,53 @@ export async function fetchRouteDailyTransactions() {
     try {
       console.log('[API] 📈 Fetching historical trend data from Supabase...');
       const step = 50000;
-      let combinedData = [];
+      const combinedData = [];
       let from = 0;
       let hasMore = true;
+      let useCompactView = true;
+      let detectedServerLimit = null;
 
       while (hasMore) {
         const to = from + step - 1;
-        const { data, error } = await supabase
-          .from(API_CONFIG.TABLES.DAILY_TRANSACTIONS)
-          .select(
-            'origin,customer_name,customer_type,product_category,province,zone,truck_type,fwd_agent_desc,ship_to_desc,transaction_date,actual_trips'
-          )
-          //.order('transaction_date', { ascending: true })
-          .range(from, to);
+        const targetRelation = useCompactView ? 'view_route_daily_compact' : API_CONFIG.TABLES.DAILY_TRANSACTIONS;
+        const targetColumns = useCompactView
+          ? 'row_match_key,transaction_date,actual_trips'
+          : 'origin,customer_name,customer_type,product_category,province,zone,truck_type,fwd_agent_desc,ship_to_desc,transaction_date,actual_trips';
+
+        const { data, error } = await supabase.from(targetRelation).select(targetColumns).range(from, to);
+
+        // หากยังไม่ได้สร้าง view_route_daily_compact บน Supabase ให้สลับไปดึงตารางหลักอัตโนมัติ
+        if (error && useCompactView) {
+          console.warn('[API] ⚠️ view_route_daily_compact not found, falling back to raw table...');
+          useCompactView = false;
+          from = 0;
+          combinedData.length = 0;
+          continue;
+        }
 
         if (error) throw error;
 
         if (data && data.length > 0) {
-          combinedData = combinedData.concat(data);
-          if (data.length < step) {
+          combinedData.push(...data);
+          from += data.length;
+
+          // บันทึกเพดาน Max Rows ของ Supabase จากรอบแรก (เช่น 1,000 หรือ 50,000 แถว)
+          if (detectedServerLimit === null) {
+            detectedServerLimit = data.length;
+          }
+
+          // หยุดดึงเมื่อได้ข้อมูลน้อยกว่า 1,000 แถว (เพดานต่ำสุดของ PostgREST) หรือน้อยกว่ารอบแรก
+          if (data.length < 1000 || data.length < detectedServerLimit) {
             hasMore = false;
-          } else {
-            from += step;
           }
         } else {
           hasMore = false;
         }
       }
 
-      console.log(`[API] ✅ Trend Data Fetch Complete. Total: ${combinedData.length} rows.`);
+      console.log(
+        `[API] ✅ Trend Data Fetch Complete (${useCompactView ? 'Compact View' : 'Raw Table'}). Total: ${combinedData.length} rows.`
+      );
       window.globalTrendData = combinedData;
       return combinedData;
     } catch (err) {

@@ -1265,14 +1265,6 @@
                           <option value="year">Year</option>
                         </select>
                         <button
-                          onclick="window.exportTrendChartToCSV()"
-                          class="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-emerald-500 cursor-pointer"
-                          title="Export chart data to CSV for Excel"
-                        >
-                          <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
-                          <span>Export CSV</span>
-                        </button>
-                        <button
                           onclick="window.toggleTrendChart()"
                           class="p-1 rounded hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
                           title="Close trend chart"
@@ -1397,8 +1389,8 @@
                       </div>
                     </div>
                   </div>
-                  <!-- 💡 4 SUMMARY CARDS (BUSINESS KPIs) -->
-                  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 px-4 pt-3 pb-1 bg-white/50 dark:bg-zinc-900/50">
+                  <!-- 💡 3 SUMMARY CARDS (BUSINESS KPIs) -->
+                  <div class="grid grid-cols-2 lg:grid-cols-3 gap-2.5 px-4 pt-3 pb-1 bg-white/50 dark:bg-zinc-900/50">
                     <!-- Card 1: Volume Achievement -->
                     <div
                       class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
@@ -1445,20 +1437,6 @@
                         <span id="trend-stat-unit3" class="text-[9px] text-slate-500 font-bold">trips/wk</span>
                       </div>
                       <div id="trend-stat-volatility" class="text-[9px] mt-0.5 font-bold truncate">...</div>
-                    </div>
-
-                    <!-- Card 4: Missing/Zero -->
-                    <div
-                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
-                    >
-                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
-                        >Missing / Zero Volume</span
-                      >
-                      <div class="flex items-baseline gap-1.5">
-                        <span id="trend-stat-zero" class="text-lg font-black text-rose-600 dark:text-rose-400">0</span>
-                        <span class="text-[9px] text-slate-500 font-bold">Periods</span>
-                      </div>
-                      <div id="trend-stat-zero-sub" class="text-[9px] mt-0.5 font-bold truncate">...</div>
                     </div>
                   </div>
 
