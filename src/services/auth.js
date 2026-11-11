@@ -48,7 +48,7 @@ export async function signInWithMicrosoft() {
   } catch (err) {
     console.error('Microsoft Login Error:', err);
     if (typeof window.showToast === 'function')
-      window.showToast(`เกิดข้อผิดพลาด: ${err.message || 'เข้าสู่ระบบไม่สำเร็จ'}`);
+      window.showToast(`Sign-in error: ${err.message || 'Unable to sign in.'}`);
     setLoginButtonState('idle');
   }
 }
@@ -154,7 +154,7 @@ export async function signOutUser() {
   if (typeof window.currentFilteredData !== 'undefined') window.currentFilteredData = [];
 
   showLoginScreen();
-  if (typeof window.showToast === 'function') window.showToast('ออกจากระบบเรียบร้อยแล้ว');
+  if (typeof window.showToast === 'function') window.showToast('Signed out successfully.');
 }
 
 export async function initializeAuthSession() {
@@ -164,7 +164,7 @@ export async function initializeAuthSession() {
 
   if (authError) {
     console.error('OAuth Return Error:', authError);
-    if (typeof window.showToast === 'function') window.showToast(`⚠️ เข้าสู่ระบบไม่สำเร็จ: ${authError}`);
+    if (typeof window.showToast === 'function') window.showToast(`⚠️ Sign-in failed: ${authError}`);
     showLoginScreen();
     window.history.replaceState({}, document.title, window.location.pathname);
     return;

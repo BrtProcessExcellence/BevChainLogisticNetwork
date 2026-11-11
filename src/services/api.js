@@ -44,14 +44,14 @@ let inFlightRouteFetchPromise = null;
 // ==============================================================================
 function handleApiError(error, contextMessage) {
   console.error(`[API ERROR] ${contextMessage}:`, error);
-  let userMsg = 'เกิดข้อผิดพลาดในการดึงข้อมูล โปรดลองอีกครั้ง';
+  let userMsg = 'An error occurred while fetching data. Please try again.';
 
   if (error?.message === 'Failed to fetch') {
-    userMsg = 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ ตรวจสอบอินเทอร์เน็ตของคุณ';
+    userMsg = 'Unable to connect to the server. Check your internet connection.';
   } else if (error?.code === 'PGRST301' || error?.code === '401') {
-    userMsg = 'เซสชันหมดอายุ หรือไม่มีสิทธิ์เข้าถึง กรุณาเข้าสู่ระบบใหม่';
+    userMsg = 'Your session has expired or you do not have permission. Please sign in again.';
   } else if (error?.code === '42P01') {
-    userMsg = 'โครงสร้างข้อมูลขัดข้อง (Table/View not found)';
+    userMsg = 'A data structure error occurred (table/view not found).';
   } else if (error?.message) {
     userMsg = error.message;
   }
