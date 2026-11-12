@@ -317,10 +317,14 @@ window.renderTrendChart = async function () {
     let baselineVal = plan.baseline;
 
     if (selectedTimeframe === 'weekday') {
-      const daysCount = weekdayCounts[key] || 1;
-      actualVal = actualVal / daysCount;
-      backhaulVal = backhaulVal / daysCount;
-      baselineVal = baselineVal / daysCount;
+      // คำนวณจำนวนสัปดาห์ตามช่วงวันที่ที่เลือกจริง (เช่น 365 วัน / 7 วัน = 52.142857142857143 สัปดาห์)
+      const totalIncludedDays = activeWeekdays.reduce((sum, dKey) => sum + (weekdayCounts[dKey] || 0), 0);
+      const weeksInSelectedRange =
+        activeWeekdays.length > 0 && totalIncludedDays > 0 ? totalIncludedDays / activeWeekdays.length : 1;
+
+      actualVal = actualVal / weeksInSelectedRange;
+      backhaulVal = backhaulVal / weeksInSelectedRange;
+      baselineVal = baselineVal / (weekdayCounts[key] || 1);
     }
 
     actualVal = Number(actualVal.toFixed(2));
