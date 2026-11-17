@@ -1390,62 +1390,123 @@
                     </div>
                   </div>
                   <!-- 💡 3 SUMMARY CARDS (BUSINESS KPIs) -->
-                  <div class="grid grid-cols-2 lg:grid-cols-3 gap-2.5 px-4 pt-3 pb-1 bg-white/50 dark:bg-zinc-900/50">
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 px-4 pt-3 pb-2 bg-slate-50/60 dark:bg-zinc-950/40">
                     <!-- Card 1: Volume Achievement -->
                     <div
-                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
+                      class="relative overflow-hidden bg-white dark:bg-zinc-900 border border-slate-200/90 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 px-4 py-3 rounded-2xl shadow-sm transition-all flex flex-col justify-between gap-1.5"
                     >
-                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
-                        >Volume Achievement</span
-                      >
+                      <div class="flex items-center justify-between gap-2">
+                        <span
+                          class="text-[10px] text-slate-500 dark:text-slate-400 font-extrabold uppercase tracking-wider"
+                        >
+                          Volume Achievement
+                        </span>
+                        <span
+                          class="w-7 h-7 rounded-xl bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0"
+                        >
+                          <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i>
+                        </span>
+                      </div>
+
                       <div class="flex items-baseline gap-1.5">
-                        <span id="trend-stat-actual" class="text-lg font-black text-slate-800 dark:text-white"
+                        <span
+                          id="trend-stat-actual"
+                          class="text-2xl font-black tracking-tight tabular-nums text-slate-800 dark:text-white leading-none"
                           >0.00</span
                         >
-                        <span id="trend-stat-unit1" class="text-[9px] text-slate-500 font-bold">trips</span>
+                        <span id="trend-stat-unit1" class="text-[11px] text-slate-400 dark:text-slate-500 font-bold"
+                          >trips</span
+                        >
+                      </div>
+
+                      <div class="text-[10px] text-slate-400 dark:text-slate-500 font-medium flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-sky-500 shrink-0"></span>
+                        <span class="truncate">Total actual volume in selected range</span>
                       </div>
                     </div>
 
                     <!-- Card 2: Backhaul Opportunity -->
                     <div
-                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
+                      class="relative overflow-hidden bg-white dark:bg-zinc-900 border border-slate-200/90 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-500/40 px-4 py-3 rounded-2xl shadow-sm transition-all flex flex-col justify-between gap-1.5"
                     >
-                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
-                        >Backhaul Opportunity</span
-                      >
+                      <div class="flex items-center justify-between gap-2">
+                        <span
+                          class="text-[10px] text-slate-500 dark:text-slate-400 font-extrabold uppercase tracking-wider"
+                        >
+                          Backhaul Opportunity
+                        </span>
+                        <span
+                          class="w-7 h-7 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0"
+                        >
+                          <i data-lucide="repeat-2" class="w-3.5 h-3.5"></i>
+                        </span>
+                      </div>
+
                       <div class="flex items-baseline gap-1.5">
-                        <span id="trend-stat-backhaul" class="text-lg font-black text-emerald-600 dark:text-emerald-400"
+                        <span
+                          id="trend-stat-backhaul"
+                          class="text-2xl font-black tracking-tight tabular-nums text-emerald-600 dark:text-emerald-400 leading-none"
                           >0.00</span
                         >
-                        <span id="trend-stat-unit2" class="text-[9px] text-slate-500 font-bold">trips</span>
+                        <span id="trend-stat-unit2" class="text-[11px] text-slate-400 dark:text-slate-500 font-bold"
+                          >trips</span
+                        >
                       </div>
-                      <div id="trend-stat-capacity" class="text-[9px] mt-0.5 font-bold truncate">...</div>
+
+                      <div class="flex items-center">
+                        <div
+                          id="trend-stat-capacity"
+                          class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 truncate"
+                        >
+                          ...
+                        </div>
+                      </div>
                     </div>
 
                     <!-- Card 3: Min & Max Volume -->
                     <div
-                      class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
+                      class="relative overflow-hidden bg-white dark:bg-zinc-900 border border-slate-200/90 dark:border-slate-800 hover:border-orange-300 dark:hover:border-orange-500/40 px-4 py-3 rounded-2xl shadow-sm transition-all flex flex-col gap-1.5"
                     >
-                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-1"
-                        >Min &amp; Max Volume in Current View</span
-                      >
-                      <div class="grid grid-cols-2 gap-2 text-center">
-                        <div class="flex flex-col items-center">
-                          <span id="trend-stat-min" class="text-lg font-black text-slate-700 dark:text-slate-200"
+                      <div class="flex items-center justify-between gap-2 h-7">
+                        <span
+                          class="text-[10px] text-slate-500 dark:text-slate-400 font-extrabold uppercase tracking-wider truncate"
+                        >
+                          Min &amp; Max Volume in Current View
+                        </span>
+                        <span
+                          id="trend-stat-unit3"
+                          class="px-2.5 py-0.5 rounded-full bg-orange-50 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-bold shrink-0"
+                        >
+                          trips/wk
+                        </span>
+                      </div>
+
+                      <div class="grid grid-cols-2 gap-2.5 flex-1 min-h-[52px]">
+                        <div
+                          class="rounded-xl bg-slate-50 dark:bg-zinc-800/60 border border-slate-100 dark:border-slate-800 px-3.5 py-2 flex items-center justify-between gap-2 h-full"
+                        >
+                          <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Min</span>
+                          <span
+                            id="trend-stat-min"
+                            class="text-2xl font-black tracking-tight tabular-nums text-slate-700 dark:text-slate-200 leading-none"
                             >0</span
                           >
-                          <span class="text-[9px] text-slate-400 font-bold uppercase">Min</span>
                         </div>
-                        <div class="flex flex-col items-center">
-                          <span id="trend-stat-max" class="text-lg font-black text-orange-500 dark:text-orange-400"
+
+                        <div
+                          class="rounded-xl bg-orange-50/70 dark:bg-orange-500/10 border border-orange-100/80 dark:border-orange-500/20 px-3.5 py-2 flex items-center justify-between gap-2 h-full"
+                        >
+                          <span
+                            class="text-[10px] text-orange-500/80 dark:text-orange-400/80 font-bold uppercase tracking-wide"
+                            >Max</span
+                          >
+                          <span
+                            id="trend-stat-max"
+                            class="text-2xl font-black tracking-tight tabular-nums text-orange-500 dark:text-orange-400 leading-none"
                             >0</span
                           >
-                          <span class="text-[9px] text-slate-400 font-bold uppercase">Max</span>
                         </div>
                       </div>
-                      <span id="trend-stat-unit3" class="text-[9px] text-slate-500 font-bold text-center mt-0.5"
-                        >trips/wk</span
-                      >
                     </div>
                   </div>
 

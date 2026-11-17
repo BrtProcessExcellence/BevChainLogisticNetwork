@@ -367,7 +367,7 @@ window.renderTrendChart = async function () {
   // อัปเดต Subtitle แสดงช่วงวันที่และจำนวนรายการ
   const subEl = document.getElementById('trend-subtitle-range');
   if (subEl) {
-    subEl.innerText = `ข้อมูลตั้งแต่ ${startStr} to ${endStr}`;
+    subEl.innerText = `From ${startStr} to ${endStr}`;
   }
 
   // คำนวณ KPI Cards
@@ -1717,7 +1717,7 @@ function groupRouteData(filteredData = []) {
   Object.values(groupedRoutes).forEach((grp) => {
     const count = grp.vendors.length;
     grp.availablePct = Math.max(0, Math.round(100 - (count > 0 ? grp.sumPct / count : 0)));
-    grp.vendors.sort((a, b) => b._parsed.availPct - a._parsed.availPct);
+    grp.vendors.sort((a, b) => b._parsed.availTrips - a._parsed.availTrips);
   });
 
   return groupedRoutes;
