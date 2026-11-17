@@ -302,7 +302,6 @@ window.renderTrendChart = async function () {
 
   let sumActualPeriod = 0;
   let sumBackhaulPeriod = 0;
-  let sumBaselinePeriod = 0;
   let peakActualPeriod = 0;
   let lowestActualPeriod = Infinity;
 
@@ -339,7 +338,6 @@ window.renderTrendChart = async function () {
     dataTotal.push(actualVal);
     dataBackhaul.push(backhaulVal);
 
-    sumBaselinePeriod += baselineVal;
     dataBaseline.push(planByPeriod[key] ? baselineVal : null);
     if (supportsPeakSeries) {
       dataOnPeak.push(seasonalActualSeries.onPeak[index] ?? null);
@@ -350,7 +348,7 @@ window.renderTrendChart = async function () {
     if (selectedTimeframe === 'day') {
       const d = parseTrendDateKey(key);
       if (d) {
-        label = d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }).replace(/ /g, '-');
+        label = d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: '2-digit' });
       }
     } else if (selectedTimeframe === 'week') {
       const weekNum = getTrendIsoWeekNumber(key);
@@ -369,15 +367,11 @@ window.renderTrendChart = async function () {
   // อัปเดต Subtitle แสดงช่วงวันที่และจำนวนรายการ
   const subEl = document.getElementById('trend-subtitle-range');
   if (subEl) {
-    subEl.innerText = `ข้อมูลตั้งแต่ ${startStr} ถึง ${endStr} (${activeRoutes.length.toLocaleString()} รายการที่กรอง)`;
+    subEl.innerText = `ข้อมูลตั้งแต่ ${startStr} to ${endStr}`;
   }
 
   // คำนวณ KPI Cards
-  const avgActual = displayKeys.length > 0 ? sumActualPeriod / displayKeys.length : 0;
-  const achievementPct = sumBaselinePeriod > 0 ? (sumActualPeriod / sumBaselinePeriod) * 100 : 0;
-  const variance = sumActualPeriod - sumBaselinePeriod;
   const avgCapacityPct = sumActualPeriod > 0 ? (sumBackhaulPeriod / sumActualPeriod) * 100 : 0;
-  const peakToAvg = avgActual > 0 ? ((peakActualPeriod - avgActual) / avgActual) * 100 : 0;
 
   const fmtOpts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
   const setBadgeHtml = (id, html) => {
@@ -386,29 +380,15 @@ window.renderTrendChart = async function () {
   };
 
   setBadgeHtml('trend-stat-actual', sumActualPeriod.toLocaleString('en-US', fmtOpts));
-  const achieveColor =
-    achievementPct >= 90
-      ? 'text-emerald-600 dark:text-emerald-400'
-      : achievementPct >= 80
-        ? 'text-amber-500'
-        : 'text-rose-500';
-  const variancePrefix = variance > 0 ? '+' : '';
-  setBadgeHtml(
-    'trend-stat-achieve',
-    `<span class="${achieveColor}">${achievementPct.toLocaleString('en-US', fmtOpts)}% Achieved</span> <span class="text-slate-400 font-normal ml-1">(Var: ${variancePrefix}${variance.toLocaleString('en-US', fmtOpts)})</span>`
-  );
-
   setBadgeHtml('trend-stat-backhaul', sumBackhaulPeriod.toLocaleString('en-US', fmtOpts));
   setBadgeHtml(
     'trend-stat-capacity',
     `<span class="text-emerald-600 dark:text-emerald-400">Avg Capacity: ${avgCapacityPct.toLocaleString('en-US', fmtOpts)}%</span>`
   );
 
-  setBadgeHtml('trend-stat-peak', peakActualPeriod.toLocaleString('en-US', fmtOpts));
-  setBadgeHtml(
-    'trend-stat-volatility',
-    `<span class="text-slate-500 font-normal">Lowest: ${lowestActualPeriod.toLocaleString('en-US', fmtOpts)}</span> <span class="text-orange-500 ml-1">| Peak-to-Avg: +${peakToAvg.toLocaleString('en-US', fmtOpts)}%</span>`
-  );
+  const rangeValueOptions = { maximumFractionDigits: 0 };
+  setBadgeHtml('trend-stat-min', lowestActualPeriod.toLocaleString('en-US', rangeValueOptions));
+  setBadgeHtml('trend-stat-max', peakActualPeriod.toLocaleString('en-US', rangeValueOptions));
 
   const cumulativeUnit = selectedTimeframe === 'weekday' ? 'trips/wk (avg)' : 'trips';
   setBadgeHtml('trend-stat-unit1', cumulativeUnit);

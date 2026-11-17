@@ -1404,7 +1404,6 @@
                         >
                         <span id="trend-stat-unit1" class="text-[9px] text-slate-500 font-bold">trips</span>
                       </div>
-                      <div id="trend-stat-achieve" class="text-[9px] mt-0.5 font-bold truncate">...</div>
                     </div>
 
                     <!-- Card 2: Backhaul Opportunity -->
@@ -1423,20 +1422,30 @@
                       <div id="trend-stat-capacity" class="text-[9px] mt-0.5 font-bold truncate">...</div>
                     </div>
 
-                    <!-- Card 3: Volatility -->
+                    <!-- Card 3: Min & Max Volume -->
                     <div
                       class="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-800 p-2.5 rounded-xl shadow-sm flex flex-col justify-between"
                     >
-                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-0.5"
-                        >Volume Volatility (Peak)</span
+                      <span class="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-1"
+                        >Min &amp; Max Volume in Current View</span
                       >
-                      <div class="flex items-baseline gap-1.5">
-                        <span id="trend-stat-peak" class="text-lg font-black text-orange-500 dark:text-orange-400"
-                          >0.00</span
-                        >
-                        <span id="trend-stat-unit3" class="text-[9px] text-slate-500 font-bold">trips/wk</span>
+                      <div class="grid grid-cols-2 gap-2 text-center">
+                        <div class="flex flex-col items-center">
+                          <span id="trend-stat-min" class="text-lg font-black text-slate-700 dark:text-slate-200"
+                            >0</span
+                          >
+                          <span class="text-[9px] text-slate-400 font-bold uppercase">Min</span>
+                        </div>
+                        <div class="flex flex-col items-center">
+                          <span id="trend-stat-max" class="text-lg font-black text-orange-500 dark:text-orange-400"
+                            >0</span
+                          >
+                          <span class="text-[9px] text-slate-400 font-bold uppercase">Max</span>
+                        </div>
                       </div>
-                      <div id="trend-stat-volatility" class="text-[9px] mt-0.5 font-bold truncate">...</div>
+                      <span id="trend-stat-unit3" class="text-[9px] text-slate-500 font-bold text-center mt-0.5"
+                        >trips/wk</span
+                      >
                     </div>
                   </div>
 
