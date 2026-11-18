@@ -1236,16 +1236,20 @@
                       </div>
 
                       <div class="flex gap-2 items-center flex-wrap">
+                        <!-- Date Range -->
                         <div
-                          class="flex items-center bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 shadow-sm"
+                          class="flex items-center gap-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 shadow-sm"
                         >
+                          <span class="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                            Date:
+                          </span>
                           <input
                             type="date"
                             id="trend-start-date"
                             onchange="window.renderTrendChart()"
                             class="text-[10px] font-bold bg-transparent text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
                           />
-                          <span class="text-slate-400 text-[10px] mx-1">to</span>
+                          <span class="text-slate-400 text-[10px]">to</span>
                           <input
                             type="date"
                             id="trend-end-date"
@@ -1253,27 +1257,31 @@
                             class="text-[10px] font-bold bg-transparent text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
                           />
                         </div>
-                        <select
-                          id="trend-grouping"
-                          onchange="window.renderTrendChart()"
-                          class="text-[10px] font-bold py-1.5 px-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+
+                        <!-- Period Selection -->
+                        <div
+                          class="flex items-center gap-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 shadow-sm"
                         >
-                          <option value="day">Daily Trend (Day)</option>
-                          <option value="weekday">Weekday Pattern (Weekday)</option>
-                          <option value="week" selected>Week</option>
-                          <option value="month">Month</option>
-                          <option value="year">Year</option>
-                        </select>
-                        <button
-                          id="trend-weekday-mode-toggle"
-                          type="button"
-                          class="hidden inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-violet-200 dark:border-violet-500/30 bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300 text-[10px] font-bold hover:bg-violet-100 dark:hover:bg-violet-500/20 transition-colors cursor-pointer"
-                          onclick="window.toggleTrendWeekdayMode()"
-                          aria-pressed="false"
-                        >
-                          <i data-lucide="repeat-2" class="w-3 h-3"></i>
-                          <span id="trend-weekday-mode-label">Trips/wk (avg)</span>
-                        </button>
+                          <label
+                            for="trend-grouping"
+                            class="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 whitespace-nowrap cursor-pointer"
+                          >
+                            Period Selection:
+                          </label>
+                          <select
+                            id="trend-grouping"
+                            onchange="window.renderTrendChart()"
+                            class="text-[10px] font-bold py-0.5 bg-white dark:bg-zinc-900 text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+                          >
+                            <option value="day">Daily Trend (Day)</option>
+                            <option value="weekday">Weekday</option>
+                            <option value="week" selected>Week</option>
+                            <option value="month">Month</option>
+                            <option value="year">Year</option>
+                          </select>
+                        </div>
+
+                        <!-- Close Button -->
                         <button
                           onclick="window.toggleTrendChart()"
                           class="p-1 rounded hover:bg-slate-200 dark:hover:bg-zinc-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"

@@ -117,11 +117,6 @@ window.toggleTrendChart = function () {
   }
 };
 
-window.toggleTrendWeekdayMode = function () {
-  window.trendWeekdayDisplayMode = window.trendWeekdayDisplayMode === 'total' ? 'average' : 'total';
-  window.renderTrendChart();
-};
-
 window.renderTrendChart = async function () {
   const chartEl = document.querySelector('#chart-route-trend');
   if (!chartEl) return;
@@ -159,7 +154,6 @@ window.renderTrendChart = async function () {
   if (!['weekday', 'day', 'week', 'month', 'year'].includes(selectedTimeframe)) {
     selectedTimeframe = 'week';
   }
-  const isWeekdayTotalMode = selectedTimeframe === 'weekday' && window.trendWeekdayDisplayMode === 'total';
 
   const rawWeekdays = Array.from(document.querySelectorAll('.trend-day-filter:checked'), (input) => input.value);
   const activeWeekdays = rawWeekdays.length > 0 ? rawWeekdays : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -196,7 +190,7 @@ window.renderTrendChart = async function () {
 
   const unitMap = { weekday: 'day', day: 'day', week: 'wk', month: 'mo', year: 'yr' };
   const unitStr = unitMap[selectedTimeframe] || 'wk';
-  const chartUnit = isWeekdayTotalMode ? 'trips' : `trips/${unitStr}`;
+  const chartUnit = `trips/${unitStr}`;
 
   const checkIsPeak = (dateStr) => {
     if (typeof window.isTrendOnPeakWeek === 'function') {
@@ -207,7 +201,7 @@ window.renderTrendChart = async function () {
 
   const weekdayCounts = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
 
-  if (selectedTimeframe === 'weekday') {
+  if (['weekday', 'week'].includes(selectedTimeframe)) {
     let curD = parseTrendDateKey(startStr);
     const endD = parseTrendDateKey(endStr);
     while (curD && endD && curD <= endD) {
@@ -219,6 +213,9 @@ window.renderTrendChart = async function () {
       curD.setDate(curD.getDate() + 1);
     }
   }
+  const totalIncludedDays = activeWeekdays.reduce((sum, dKey) => sum + (weekdayCounts[dKey] || 0), 0);
+  const weeksInSelectedRange =
+    activeWeekdays.length > 0 && totalIncludedDays > 0 ? totalIncludedDays / activeWeekdays.length : 1;
 
   const timeGroupMap = {};
   Object.keys(exactRowMap).forEach((key) => {
@@ -321,12 +318,7 @@ window.renderTrendChart = async function () {
     let backhaulVal = stat.backhaul;
     let baselineVal = plan.baseline;
 
-    if (selectedTimeframe === 'weekday' && !isWeekdayTotalMode) {
-      // คำนวณจำนวนสัปดาห์ตามช่วงวันที่ที่เลือกจริง (เช่น 365 วัน / 7 วัน = 52.142857142857143 สัปดาห์)
-      const totalIncludedDays = activeWeekdays.reduce((sum, dKey) => sum + (weekdayCounts[dKey] || 0), 0);
-      const weeksInSelectedRange =
-        activeWeekdays.length > 0 && totalIncludedDays > 0 ? totalIncludedDays / activeWeekdays.length : 1;
-
+    if (selectedTimeframe === 'weekday') {
       actualVal = actualVal / weeksInSelectedRange;
       backhaulVal = backhaulVal / weeksInSelectedRange;
       baselineVal = baselineVal / (weekdayCounts[key] || 1);
@@ -385,28 +377,33 @@ window.renderTrendChart = async function () {
     if (el) el.innerHTML = html;
   };
 
-  const weekdayModeToggle = document.getElementById('trend-weekday-mode-toggle');
-  if (weekdayModeToggle) {
-    weekdayModeToggle.classList.toggle('hidden', selectedTimeframe !== 'weekday');
-    weekdayModeToggle.setAttribute('aria-pressed', String(isWeekdayTotalMode));
-    weekdayModeToggle.title = isWeekdayTotalMode
-      ? 'Switch to Trips/wk (avg)'
-      : 'Switch to Total Trips in Selected Range';
-  }
-  const weekdayModeLabel = document.getElementById('trend-weekday-mode-label');
-  if (weekdayModeLabel) {
-    weekdayModeLabel.textContent = isWeekdayTotalMode ? 'Total Trips' : 'Trips/wk (avg)';
-  }
+  const averagePeriods = ['day', 'week', 'month'].includes(selectedTimeframe);
+  const averagePeriodCount = selectedTimeframe === 'week' ? weeksInSelectedRange : displayKeys.length;
+  const volumeAchievement =
+    averagePeriods && averagePeriodCount ? sumActualPeriod / averagePeriodCount : sumActualPeriod;
+  const backhaulOpportunity =
+    averagePeriods && averagePeriodCount ? sumBackhaulPeriod / averagePeriodCount : sumBackhaulPeriod;
+  const volumeUnitMap = {
+    day: 'trips/day',
+    week: 'trips/wk',
+    month: 'trips/mo',
+    year: 'trips',
+    weekday: 'trips/wk (avg)'
+  };
+  const volumeUnit = volumeUnitMap[selectedTimeframe] || 'trips';
   const actualDescription = document.getElementById('trend-stat-actual-description');
   if (actualDescription) {
-    actualDescription.textContent = isWeekdayTotalMode
-      ? 'Total actual volume in selected range'
-      : selectedTimeframe === 'weekday'
-        ? 'Average weekly actual volume'
-        : 'Total actual volume in selected range';
+    const descriptionMap = {
+      day: 'Average daily actual volume in selected range',
+      week: 'Average weekly actual volume in selected range',
+      month: 'Average monthly actual volume in selected range',
+      year: 'Total actual volume in selected range',
+      weekday: 'Average weekly actual volume by weekday'
+    };
+    actualDescription.textContent = descriptionMap[selectedTimeframe] || 'Total actual volume in selected range';
   }
-  setBadgeHtml('trend-stat-actual', sumActualPeriod.toLocaleString('en-US', fmtOpts));
-  setBadgeHtml('trend-stat-backhaul', sumBackhaulPeriod.toLocaleString('en-US', fmtOpts));
+  setBadgeHtml('trend-stat-actual', volumeAchievement.toLocaleString('en-US', fmtOpts));
+  setBadgeHtml('trend-stat-backhaul', backhaulOpportunity.toLocaleString('en-US', fmtOpts));
   setBadgeHtml(
     'trend-stat-capacity',
     `<span class="text-emerald-600 dark:text-emerald-400">Avg Capacity: ${avgCapacityPct.toLocaleString('en-US', fmtOpts)}%</span>`
@@ -416,10 +413,9 @@ window.renderTrendChart = async function () {
   setBadgeHtml('trend-stat-min', lowestActualPeriod.toLocaleString('en-US', rangeValueOptions));
   setBadgeHtml('trend-stat-max', peakActualPeriod.toLocaleString('en-US', rangeValueOptions));
 
-  const cumulativeUnit = selectedTimeframe === 'weekday' && !isWeekdayTotalMode ? 'trips/wk (avg)' : 'trips';
-  setBadgeHtml('trend-stat-unit1', cumulativeUnit);
-  setBadgeHtml('trend-stat-unit2', cumulativeUnit);
-  setBadgeHtml('trend-stat-unit3', isWeekdayTotalMode ? 'trips' : `trips/${unitStr}`);
+  setBadgeHtml('trend-stat-unit1', volumeUnit);
+  setBadgeHtml('trend-stat-unit2', volumeUnit);
+  setBadgeHtml('trend-stat-unit3', `trips/${unitStr}`);
 
   // 💡 แสดงเส้น On Peak / Off Peak Baseline เฉพาะในโหมด day และ week
   const trendSeries = [
