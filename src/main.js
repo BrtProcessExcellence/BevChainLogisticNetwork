@@ -117,6 +117,11 @@ window.toggleTrendChart = function () {
   }
 };
 
+window.toggleTrendWeekdayMode = function () {
+  window.trendWeekdayDisplayMode = window.trendWeekdayDisplayMode === 'total' ? 'average' : 'total';
+  window.renderTrendChart();
+};
+
 window.renderTrendChart = async function () {
   const chartEl = document.querySelector('#chart-route-trend');
   if (!chartEl) return;
@@ -154,6 +159,7 @@ window.renderTrendChart = async function () {
   if (!['weekday', 'day', 'week', 'month', 'year'].includes(selectedTimeframe)) {
     selectedTimeframe = 'week';
   }
+  const isWeekdayTotalMode = selectedTimeframe === 'weekday' && window.trendWeekdayDisplayMode === 'total';
 
   const rawWeekdays = Array.from(document.querySelectorAll('.trend-day-filter:checked'), (input) => input.value);
   const activeWeekdays = rawWeekdays.length > 0 ? rawWeekdays : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -190,6 +196,7 @@ window.renderTrendChart = async function () {
 
   const unitMap = { weekday: 'day', day: 'day', week: 'wk', month: 'mo', year: 'yr' };
   const unitStr = unitMap[selectedTimeframe] || 'wk';
+  const chartUnit = isWeekdayTotalMode ? 'trips' : `trips/${unitStr}`;
 
   const checkIsPeak = (dateStr) => {
     if (typeof window.isTrendOnPeakWeek === 'function') {
@@ -254,7 +261,6 @@ window.renderTrendChart = async function () {
     showOnPeak,
     showOffPeak
   });
-
   let displayKeys = [];
   const dStart = parseTrendDateKey(startStr);
   const dEnd = parseTrendDateKey(endStr);
@@ -315,7 +321,7 @@ window.renderTrendChart = async function () {
     let backhaulVal = stat.backhaul;
     let baselineVal = plan.baseline;
 
-    if (selectedTimeframe === 'weekday') {
+    if (selectedTimeframe === 'weekday' && !isWeekdayTotalMode) {
       // คำนวณจำนวนสัปดาห์ตามช่วงวันที่ที่เลือกจริง (เช่น 365 วัน / 7 วัน = 52.142857142857143 สัปดาห์)
       const totalIncludedDays = activeWeekdays.reduce((sum, dKey) => sum + (weekdayCounts[dKey] || 0), 0);
       const weeksInSelectedRange =
@@ -379,6 +385,26 @@ window.renderTrendChart = async function () {
     if (el) el.innerHTML = html;
   };
 
+  const weekdayModeToggle = document.getElementById('trend-weekday-mode-toggle');
+  if (weekdayModeToggle) {
+    weekdayModeToggle.classList.toggle('hidden', selectedTimeframe !== 'weekday');
+    weekdayModeToggle.setAttribute('aria-pressed', String(isWeekdayTotalMode));
+    weekdayModeToggle.title = isWeekdayTotalMode
+      ? 'Switch to Trips/wk (avg)'
+      : 'Switch to Total Trips in Selected Range';
+  }
+  const weekdayModeLabel = document.getElementById('trend-weekday-mode-label');
+  if (weekdayModeLabel) {
+    weekdayModeLabel.textContent = isWeekdayTotalMode ? 'Total Trips' : 'Trips/wk (avg)';
+  }
+  const actualDescription = document.getElementById('trend-stat-actual-description');
+  if (actualDescription) {
+    actualDescription.textContent = isWeekdayTotalMode
+      ? 'Total actual volume in selected range'
+      : selectedTimeframe === 'weekday'
+        ? 'Average weekly actual volume'
+        : 'Total actual volume in selected range';
+  }
   setBadgeHtml('trend-stat-actual', sumActualPeriod.toLocaleString('en-US', fmtOpts));
   setBadgeHtml('trend-stat-backhaul', sumBackhaulPeriod.toLocaleString('en-US', fmtOpts));
   setBadgeHtml(
@@ -390,10 +416,10 @@ window.renderTrendChart = async function () {
   setBadgeHtml('trend-stat-min', lowestActualPeriod.toLocaleString('en-US', rangeValueOptions));
   setBadgeHtml('trend-stat-max', peakActualPeriod.toLocaleString('en-US', rangeValueOptions));
 
-  const cumulativeUnit = selectedTimeframe === 'weekday' ? 'trips/wk (avg)' : 'trips';
+  const cumulativeUnit = selectedTimeframe === 'weekday' && !isWeekdayTotalMode ? 'trips/wk (avg)' : 'trips';
   setBadgeHtml('trend-stat-unit1', cumulativeUnit);
   setBadgeHtml('trend-stat-unit2', cumulativeUnit);
-  setBadgeHtml('trend-stat-unit3', `trips/${unitStr}`);
+  setBadgeHtml('trend-stat-unit3', isWeekdayTotalMode ? 'trips' : `trips/${unitStr}`);
 
   // 💡 แสดงเส้น On Peak / Off Peak Baseline เฉพาะในโหมด day และ week
   const trendSeries = [
@@ -447,7 +473,7 @@ window.renderTrendChart = async function () {
       y: {
         formatter: function (val) {
           if (val === undefined || val === null) return '-';
-          return `${Number(val).toLocaleString('en-US', fmtOpts)} trips/${unitStr}`;
+          return `${Number(val).toLocaleString('en-US', fmtOpts)} ${chartUnit}`;
         }
       }
     },
