@@ -90,6 +90,18 @@ export function isTrendOnPeakWeek(dateKey) {
   return weekNumber !== null && ((weekNumber >= 10 && weekNumber <= 16) || (weekNumber >= 47 && weekNumber <= 52));
 }
 
+export function isTrendOnPeakMonth(dateOrMonthKey) {
+  const match = /^\d{4}-(\d{2})/.exec(String(dateOrMonthKey || ''));
+  if (!match) return false;
+  const month = Number(match[1]);
+  return month === 3 || month === 4 || month === 11 || month === 12;
+}
+
+export function isTrendOnPeakForTimeframe(dateKey, timeframe) {
+  if (timeframe === 'month') return isTrendOnPeakMonth(dateKey);
+  return isTrendOnPeakWeek(dateKey);
+}
+
 export function calculateTrendPlanBaseline({
   bucketKey,
   timeframe,
@@ -152,11 +164,11 @@ export function calculateTrendPlanBaseline({
 
   let onPeakDays = 0;
   let offPeakDays = 0;
-  const current = overlapStart;
+  const current = new Date(overlapStart);
   while (current <= overlapEnd) {
     const dateKey = formatTrendDateKey(current);
     if (selectedWeekdays.includes(getTrendWeekday(dateKey))) {
-      const isOnPeak = isTrendOnPeakWeek(dateKey);
+      const isOnPeak = isTrendOnPeakForTimeframe(dateKey, timeframe);
       if (isOnPeak && showOnPeak) onPeakDays += 1;
       if (!isOnPeak && showOffPeak) offPeakDays += 1;
     }
@@ -195,12 +207,12 @@ export function aggregateTrendPlanByPeriod(
 
   const selectedWeekdays = weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const periods = {};
-  const current = rangeStart;
+  const current = new Date(rangeStart);
 
   while (current <= rangeEnd) {
     const dateKey = formatTrendDateKey(current);
     const weekday = getTrendWeekday(dateKey);
-    const isOnPeak = isTrendOnPeakWeek(dateKey);
+    const isOnPeak = isTrendOnPeakForTimeframe(dateKey, timeframe);
 
     if (selectedWeekdays.includes(weekday) && ((isOnPeak && showOnPeak) || (!isOnPeak && showOffPeak))) {
       const timeKey = getTrendTimeKey(dateKey, timeframe);
@@ -208,7 +220,13 @@ export function aggregateTrendPlanByPeriod(
         const period = (periods[timeKey] ||= { baseline: 0 });
 
         for (const plan of routePlans) {
-          period.baseline += plan.trips / 7;
+          const weeklyRate =
+            timeframe === 'month'
+              ? (plan.trips ?? 0)
+              : isOnPeak
+                ? (plan.onPeak ?? plan.trips ?? 0)
+                : (plan.offPeak ?? plan.trips ?? 0);
+          period.baseline += weeklyRate / 7;
         }
       }
     }
@@ -218,7 +236,6 @@ export function aggregateTrendPlanByPeriod(
 
   return periods;
 }
-
 export function getTrendSeasonalAverageSeries(periods) {
   const onPeakPeriods = periods.filter((period) => period.category === 'onPeak');
   const offPeakPeriods = periods.filter((period) => period.category === 'offPeak');
@@ -243,13 +260,14 @@ export function getFlatTrendBaseline(values) {
 
 export function summarizeActualPeriods(values) {
   const totalActualTrips = values.reduce((sum, value) => sum + value, 0);
-  const periodsWithData = values.filter((value) => value > 0).length;
+  const periodsWithData = values.filter((value) => value > 0);
 
   return {
     totalActualTrips,
-    averageActualPerPeriod: periodsWithData ? totalActualTrips / periodsWithData : 0,
+    averageActualPerPeriod: periodsWithData.length ? totalActualTrips / periodsWithData.length : 0,
     peakActualPerPeriod: values.length ? Math.max(...values) : 0,
-    periodsWithData
+    minimumActualPerPeriod: periodsWithData.length ? Math.min(...periodsWithData) : 0,
+    periodsWithData: periodsWithData.length
   };
 }
 

@@ -34,8 +34,10 @@ import {
   getTrendIsoWeekNumber,
   getTrendWeekday,
   getTrendTimeKey,
+  isTrendOnPeakMonth,
   isTrendOnPeakWeek,
-  parseTrendDateKey
+  parseTrendDateKey,
+  summarizeActualPeriods
 } from './utils/trend.js';
 import { parseNum, formatNum, cleanAllSpaces, escapeHtml, escapeAttr } from './utils/helpers.js';
 import { injectSpeedInsights } from '@vercel/speed-insights';
@@ -96,6 +98,124 @@ window.highlightSubconRoute = highlightSubconRoute;
 window.routeTrendChart = null;
 
 // ฟังก์ชันเปิด-ปิด กล่องกราฟ Trend
+// window.toggleTrendChart = function () {
+//   const container = document.getElementById('trend-chart-container');
+//   if (!container) return;
+
+//   const isHidden = container.classList.contains('hidden') || container.classList.contains('opacity-0');
+
+//   if (isHidden) {
+//     container.classList.remove('hidden');
+//     // หน่วงเวลาเล็กน้อยให้ CSS รัน Animation เลื่อนขึ้น
+//     setTimeout(() => {
+//       container.classList.remove('opacity-0', 'translate-y-10', 'pointer-events-none');
+//       container.classList.add('opacity-100', 'translate-y-0', 'pointer-events-auto');
+//       window.renderTrendChart();
+//     }, 10);
+//   } else {
+//     container.classList.remove('opacity-100', 'translate-y-0', 'pointer-events-auto');
+//     container.classList.add('opacity-0', 'translate-y-10', 'pointer-events-none');
+//     setTimeout(() => container.classList.add('hidden'), 300);
+//   }
+// };
+function getActiveTrendSyncContext() {
+  const container = document.getElementById('trend-chart-container');
+  if (!container || container.classList.contains('hidden') || !window.globalTrendIndex) {
+    return null;
+  }
+
+  const startStr = document.getElementById('trend-start-date')?.value;
+  const endStr = document.getElementById('trend-end-date')?.value;
+  if (!startStr || !endStr || startStr > endStr) return null;
+
+  let selectedTimeframe = document.getElementById('trend-grouping')?.value || 'week';
+  if (!['weekday', 'day', 'week', 'month', 'year'].includes(selectedTimeframe)) {
+    selectedTimeframe = 'week';
+  }
+
+  const rawWeekdays = Array.from(document.querySelectorAll('.trend-day-filter:checked'), (input) => input.value);
+  const activeWeekdays = rawWeekdays.length > 0 ? rawWeekdays : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const showOnPeak = document.getElementById('trend-on-peak')?.checked ?? true;
+  const showOffPeak = document.getElementById('trend-off-peak')?.checked ?? true;
+
+  const checkIsPeak = (dateStr) => {
+    if (selectedTimeframe === 'month') return isTrendOnPeakMonth(dateStr);
+    if (typeof window.isTrendOnPeakWeek === 'function') return window.isTrendOnPeakWeek(dateStr);
+    return isTrendOnPeakWeek(dateStr);
+  };
+
+  let totalIncludedDays = 0;
+  let peakIncludedDays = 0;
+  let offPeakIncludedDays = 0;
+
+  const curD = parseTrendDateKey(startStr);
+  const endD = parseTrendDateKey(endStr);
+  while (curD && endD && curD <= endD) {
+    const dStr = formatTrendDateKey(curD);
+    const dayName = getTrendWeekday(dStr);
+    if (activeWeekdays.includes(dayName)) {
+      const isPeak = checkIsPeak(dStr);
+      if ((isPeak && showOnPeak) || (!isPeak && showOffPeak)) {
+        totalIncludedDays += 1;
+        if (isPeak) peakIncludedDays += 1;
+        else offPeakIncludedDays += 1;
+      }
+    }
+    curD.setDate(curD.getDate() + 1);
+  }
+
+  const activeDayCount = activeWeekdays.length || 7;
+  const weeksInRange = totalIncludedDays > 0 ? totalIncludedDays / activeDayCount : 0;
+  const peakWeeksInRange = peakIncludedDays > 0 ? peakIncludedDays / activeDayCount : 0;
+  const offPeakWeeksInRange = offPeakIncludedDays > 0 ? offPeakIncludedDays / activeDayCount : 0;
+
+  const metricsCache = new Map();
+  const routeTxIndex = window.globalTrendIndex || {};
+
+  const getMetrics = (rowMatchKey) => {
+    if (metricsCache.has(rowMatchKey)) return metricsCache.get(rowMatchKey);
+
+    const txList = routeTxIndex[rowMatchKey] || [];
+    let totalActual = 0;
+    let peakActual = 0;
+    let offPeakActual = 0;
+
+    for (let i = 0; i < txList.length; i++) {
+      const tx = txList[i];
+      if (tx.d < startStr || tx.d > endStr) continue;
+
+      const isPeak = checkIsPeak(tx.d);
+      if (isPeak && !showOnPeak) continue;
+      if (!isPeak && !showOffPeak) continue;
+
+      const dayName = getTrendWeekday(tx.d);
+      if (!activeWeekdays.includes(dayName)) continue;
+
+      totalActual += tx.v;
+      if (isPeak) peakActual += tx.v;
+      else offPeakActual += tx.v;
+    }
+
+    const result = {
+      trips: weeksInRange > 0 ? totalActual / weeksInRange : 0,
+      peak: peakWeeksInRange > 0 ? peakActual / peakWeeksInRange : 0,
+      offPeak: offPeakWeeksInRange > 0 ? offPeakActual / offPeakWeeksInRange : 0
+    };
+
+    metricsCache.set(rowMatchKey, result);
+    return result;
+  };
+
+  return {
+    startStr,
+    endStr,
+    selectedTimeframe,
+    weeksInRange,
+    getMetrics
+  };
+}
+
+// ฟังก์ชันเปิด-ปิด กล่องกราฟ Trend (เชื่อมโยงกับตารางอัตโนมัติ)
 window.toggleTrendChart = function () {
   const container = document.getElementById('trend-chart-container');
   if (!container) return;
@@ -104,20 +224,22 @@ window.toggleTrendChart = function () {
 
   if (isHidden) {
     container.classList.remove('hidden');
-    // หน่วงเวลาเล็กน้อยให้ CSS รัน Animation เลื่อนขึ้น
     setTimeout(() => {
       container.classList.remove('opacity-0', 'translate-y-10', 'pointer-events-none');
       container.classList.add('opacity-100', 'translate-y-0', 'pointer-events-auto');
-      window.renderTrendChart();
+      window.renderTrendChart(true);
     }, 10);
   } else {
     container.classList.remove('opacity-100', 'translate-y-0', 'pointer-events-auto');
     container.classList.add('opacity-0', 'translate-y-10', 'pointer-events-none');
-    setTimeout(() => container.classList.add('hidden'), 300);
+    setTimeout(() => {
+      container.classList.add('hidden');
+      renderTable(window.currentFilteredData);
+    }, 300);
   }
 };
 
-window.renderTrendChart = async function () {
+window.renderTrendChart = async function (syncTable = true) {
   const chartEl = document.querySelector('#chart-route-trend');
   if (!chartEl) return;
 
@@ -183,7 +305,9 @@ window.renderTrendChart = async function () {
       stat.sumWeight += weight;
 
       routePlans.push({
-        trips: p.trips
+        trips: p.trips,
+        onPeak: p.peakTrips,
+        offPeak: p.offPeakTrips
       });
     }
   });
@@ -192,16 +316,19 @@ window.renderTrendChart = async function () {
   const unitStr = unitMap[selectedTimeframe] || 'wk';
   const chartUnit = `trips/${unitStr}`;
 
-  const checkIsPeak = (dateStr) => {
-    if (typeof window.isTrendOnPeakWeek === 'function') {
-      return window.isTrendOnPeakWeek(dateStr);
+  const checkIsPeak = (dateOrKeyStr) => {
+    if (selectedTimeframe === 'month') {
+      return isTrendOnPeakMonth(dateOrKeyStr);
     }
-    return isTrendOnPeakWeek(dateStr);
+    if (typeof window.isTrendOnPeakWeek === 'function') {
+      return window.isTrendOnPeakWeek(dateOrKeyStr);
+    }
+    return isTrendOnPeakWeek(dateOrKeyStr);
   };
 
   const weekdayCounts = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
 
-  if (['weekday', 'week'].includes(selectedTimeframe)) {
+  {
     let curD = parseTrendDateKey(startStr);
     const endD = parseTrendDateKey(endStr);
     while (curD && endD && curD <= endD) {
@@ -305,8 +432,6 @@ window.renderTrendChart = async function () {
 
   let sumActualPeriod = 0;
   let sumBackhaulPeriod = 0;
-  let peakActualPeriod = 0;
-  let lowestActualPeriod = Infinity;
 
   const supportsPeakSeries = ['day', 'week'].includes(selectedTimeframe);
 
@@ -330,8 +455,6 @@ window.renderTrendChart = async function () {
 
     sumActualPeriod += actualVal;
     sumBackhaulPeriod += backhaulVal;
-    if (actualVal > peakActualPeriod) peakActualPeriod = actualVal;
-    if (actualVal < lowestActualPeriod) lowestActualPeriod = actualVal;
 
     dataTotal.push(actualVal);
     dataBackhaul.push(backhaulVal);
@@ -357,10 +480,8 @@ window.renderTrendChart = async function () {
     }
     categories.push(label);
   });
-
-  dataBaseline = getFlatTrendBaseline(dataBaseline);
-
-  if (lowestActualPeriod === Infinity) lowestActualPeriod = 0;
+  dataBaseline = selectedTimeframe === 'month' ? dataBaseline : getFlatTrendBaseline(dataBaseline);
+  const actualPeriodSummary = summarizeActualPeriods(dataTotal);
 
   // อัปเดต Subtitle แสดงช่วงวันที่และจำนวนรายการ
   const subEl = document.getElementById('trend-subtitle-range');
@@ -377,12 +498,36 @@ window.renderTrendChart = async function () {
     if (el) el.innerHTML = html;
   };
 
+  // นับจำนวนเดือนเต็มที่ถูกเลือกในโหมด Month (12 เดือน, 4 เดือน On Peak หรือ 8 เดือน Off Peak)
+  const activeMonthKeys =
+    selectedTimeframe === 'month'
+      ? displayKeys.filter((mKey) => {
+          const isPeakMonth = isTrendOnPeakMonth(mKey);
+          return (isPeakMonth && showOnPeak) || (!isPeakMonth && showOffPeak);
+        })
+      : displayKeys;
+
+  if (selectedTimeframe === 'month') {
+    const monthCount = activeMonthKeys.length || 1;
+    const totalMonthBaseline = activeMonthKeys.reduce((sum, key) => sum + (planByPeriod[key]?.baseline || 0), 0);
+    const flatMonthlyBaseline = routePlans.length > 0 ? Number((totalMonthBaseline / monthCount).toFixed(2)) : null;
+    dataBaseline = displayKeys.map(() => flatMonthlyBaseline);
+  } else {
+    dataBaseline = getFlatTrendBaseline(dataBaseline);
+  }
+
   const averagePeriods = ['day', 'week', 'month'].includes(selectedTimeframe);
-  const averagePeriodCount = selectedTimeframe === 'week' ? weeksInSelectedRange : displayKeys.length;
+  const averagePeriodCount =
+    selectedTimeframe === 'week'
+      ? weeksInSelectedRange
+      : selectedTimeframe === 'month'
+        ? activeMonthKeys.length
+        : displayKeys.length;
   const volumeAchievement =
     averagePeriods && averagePeriodCount ? sumActualPeriod / averagePeriodCount : sumActualPeriod;
   const backhaulOpportunity =
     averagePeriods && averagePeriodCount ? sumBackhaulPeriod / averagePeriodCount : sumBackhaulPeriod;
+
   const volumeUnitMap = {
     day: 'trips/day',
     week: 'trips/wk',
@@ -410,8 +555,8 @@ window.renderTrendChart = async function () {
   );
 
   const rangeValueOptions = { maximumFractionDigits: 0 };
-  setBadgeHtml('trend-stat-min', lowestActualPeriod.toLocaleString('en-US', rangeValueOptions));
-  setBadgeHtml('trend-stat-max', peakActualPeriod.toLocaleString('en-US', rangeValueOptions));
+  setBadgeHtml('trend-stat-min', actualPeriodSummary.minimumActualPerPeriod.toLocaleString('en-US', rangeValueOptions));
+  setBadgeHtml('trend-stat-max', actualPeriodSummary.peakActualPerPeriod.toLocaleString('en-US', rangeValueOptions));
 
   setBadgeHtml('trend-stat-unit1', volumeUnit);
   setBadgeHtml('trend-stat-unit2', volumeUnit);
@@ -419,14 +564,34 @@ window.renderTrendChart = async function () {
 
   // 💡 แสดงเส้น On Peak / Off Peak Baseline เฉพาะในโหมด day และ week
   const trendSeries = [
-    { name: 'Actual Volume', data: dataTotal, color: '#156082', width: 3, dash: 0, marker: 4 },
-    { name: 'Backhaul', data: dataBackhaul, color: '#9bc53d', width: 3, dash: 0, marker: 4 },
-    { name: 'Baseline', data: dataBaseline, color: '#f97316', width: 2, dash: 5, marker: 0 },
+    { name: 'Actual Volume', data: dataTotal, color: '#156082', width: 3, dash: 0, marker: 4, curve: 'monotoneCubic' },
+    { name: 'Backhaul', data: dataBackhaul, color: '#9bc53d', width: 3, dash: 0, marker: 4, curve: 'monotoneCubic' },
+    { name: 'Baseline', data: dataBaseline, color: '#f97316', width: 2, dash: 5, marker: 0, curve: 'straight' },
     ...(supportsPeakSeries && showOnPeak
-      ? [{ name: 'On Peak Actual Average', data: dataOnPeak, color: '#dc2626', width: 2, dash: 0, marker: 0 }]
+      ? [
+          {
+            name: 'On Peak Actual Average',
+            data: dataOnPeak,
+            color: '#dc2626',
+            width: 2,
+            dash: 0,
+            marker: 0,
+            curve: 'straight'
+          }
+        ]
       : []),
     ...(supportsPeakSeries && showOffPeak
-      ? [{ name: 'Off Peak Actual Average', data: dataOffPeak, color: '#2563eb', width: 2, dash: 0, marker: 0 }]
+      ? [
+          {
+            name: 'Off Peak Actual Average',
+            data: dataOffPeak,
+            color: '#2563eb',
+            width: 2,
+            dash: 0,
+            marker: 0,
+            curve: 'straight'
+          }
+        ]
       : [])
   ];
 
@@ -442,7 +607,7 @@ window.renderTrendChart = async function () {
     colors: trendSeries.map((s) => s.color),
     dataLabels: { enabled: false },
     stroke: {
-      curve: 'monotoneCubic',
+      curve: trendSeries.map((s) => s.curve || 'monotoneCubic'),
       width: trendSeries.map((s) => s.width),
       dashArray: trendSeries.map((s) => s.dash)
     },
@@ -482,12 +647,24 @@ window.renderTrendChart = async function () {
     legend: { show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px', fontWeight: 700 }
   };
 
+  // if (window.routeTrendChart) {
+  //   window.routeTrendChart.updateOptions(options, false, true);
+  //   window.routeTrendChart.updateSeries(options.series);
+  // } else {
+  //   window.routeTrendChart = new ApexCharts(chartEl, options);
+  //   window.routeTrendChart.render();
+  // }
   if (window.routeTrendChart) {
     window.routeTrendChart.updateOptions(options, false, true);
     window.routeTrendChart.updateSeries(options.series);
   } else {
     window.routeTrendChart = new ApexCharts(chartEl, options);
     window.routeTrendChart.render();
+  }
+
+  // 💡 อัปเดตตารางด้านล่างให้ตรงกับช่วงเวลาและฟิลเตอร์ของกราฟทันที
+  if (syncTable) {
+    renderTable(window.currentFilteredData);
   }
 };
 
@@ -560,6 +737,11 @@ function precomputeRouteData(routes) {
 
     const workingDays = getOriginWorkingDays(origin);
     const trips = parseNum(row.avg_trip_week || row['AVG Trip/Week'], 0);
+    const rawPeak = row.avg_peak ?? row['Avg Peak'];
+    const rawOffPeak = row.avg_off_peak ?? row['Avg Off Peak'];
+    const peakTrips = rawPeak !== undefined && rawPeak !== null && rawPeak !== '' ? parseNum(rawPeak, 0) : trips;
+    const offPeakTrips =
+      rawOffPeak !== undefined && rawOffPeak !== null && rawOffPeak !== '' ? parseNum(rawOffPeak, 0) : trips;
     const tripsDay = trips / workingDays;
 
     const totalPct = parseNum(row.pct_total || row['รวม% รับงานต่อทั้งหมด(ห้ามเกิน100%)'], 0);
@@ -601,6 +783,8 @@ function precomputeRouteData(routes) {
         tripsDay,
         availTripsDay,
         trips,
+        peakTrips,
+        offPeakTrips,
         totalPct,
         availPct,
         availTrips,
@@ -1698,12 +1882,290 @@ function resetMapFilters() {
   applyDynamicFilters();
 }
 
-function groupRouteData(filteredData = []) {
+// function groupRouteData(filteredData = []) {
+//   const groupedRoutes = {};
+//   filteredData.forEach((row) => {
+//     const p = row._parsed;
+//     if (!p) return;
+//     const routeKey = p.distinctKey;
+
+//     if (!groupedRoutes[routeKey]) {
+//       groupedRoutes[routeKey] = {
+//         id: 'grp-' + Math.random().toString(36).substring(2, 11),
+//         origin: row.origin || '-',
+//         zone: row.zone || '-',
+//         province: row.province || '-',
+//         customerName: row.customer_name || '-',
+//         customerType: row.customer_type || '-',
+//         shipToDesc: row.ship_to_desc || row.province || '-',
+//         productCat: row.product_category || '-',
+//         truckType: row.truck_type || '-',
+//         mapRouteKey: p.mapRouteKey,
+//         uniqueSubcons: new Set(),
+//         totalTrips: 0,
+//         totalAvailTrips: 0,
+//         sumPct: 0,
+//         availablePct: 0,
+//         vendors: []
+//       };
+//     }
+
+//     if (p.cleanCarrier && p.cleanCarrier !== '-') {
+//       groupedRoutes[routeKey].uniqueSubcons.add(row.fwd_agent_desc);
+//     }
+
+//     groupedRoutes[routeKey].totalTrips += p.trips;
+//     groupedRoutes[routeKey].totalAvailTrips += p.availTrips;
+//     groupedRoutes[routeKey].sumPct += p.totalPct;
+//     groupedRoutes[routeKey].vendors.push(row);
+//   });
+
+//   Object.values(groupedRoutes).forEach((grp) => {
+//     const count = grp.vendors.length;
+//     grp.availablePct = Math.max(0, Math.round(100 - (count > 0 ? grp.sumPct / count : 0)));
+//     grp.vendors.sort((a, b) => b._parsed.availTrips - a._parsed.availTrips);
+//   });
+
+//   return groupedRoutes;
+// }
+
+// function renderTable(filteredData = []) {
+//   const tbody = document.getElementById('table-body');
+//   if (!tbody) return;
+//   const groupedRoutes = groupRouteData(filteredData);
+//   const routeKeys = Object.keys(groupedRoutes);
+
+//   const setText = (id, text) => {
+//     const el = document.getElementById(id);
+//     if (el) el.innerText = text;
+//   };
+
+//   if (routeKeys.length === 0) {
+//     tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-500 font-sans">No routes found for the selected filters.</td></tr>`;
+//     setText('ops-count', '0');
+//     setText('ops-avail-groups', '0');
+//     setText('ops-unavail-groups', '0');
+//     setText('ops-avail-pct', '0.0%');
+//     setText('ops-total-volume', '0');
+//     setText('ops-avail-volume', '0');
+//     document.getElementById('table-pagination').innerHTML = '';
+//     return;
+//   }
+
+//   let totalTripsSum = 0,
+//     totalAvailTripsSum = 0,
+//     availRouteGroupsCount = 0,
+//     unavailRouteGroupsCount = 0;
+//   routeKeys.forEach((key) => {
+//     const grp = groupedRoutes[key];
+//     totalTripsSum += grp.totalTrips;
+//     totalAvailTripsSum += grp.totalAvailTrips;
+//     if (grp.availablePct > 0) availRouteGroupsCount++;
+//     else unavailRouteGroupsCount++;
+//   });
+
+//   const availPct = ((availRouteGroupsCount / routeKeys.length) * 100).toFixed(1);
+
+//   routeKeys.sort((a, b) => {
+//     const routeA = groupedRoutes[a];
+//     const routeB = groupedRoutes[b];
+//     if (routeB.totalTrips !== routeA.totalTrips) return routeB.totalTrips - routeA.totalTrips;
+//     return String(a).localeCompare(String(b), 'th');
+//   });
+
+//   window.currentGroupKeys = routeKeys;
+//   window.currentGroupMap = groupedRoutes;
+
+//   setText('ops-count', routeKeys.length.toLocaleString());
+//   setText('ops-avail-groups', availRouteGroupsCount.toLocaleString());
+//   setText('ops-unavail-groups', unavailRouteGroupsCount.toLocaleString());
+//   setText('ops-avail-pct', `${availPct}%`);
+//   setText('ops-total-volume', Math.round(totalTripsSum).toLocaleString());
+//   setText('ops-avail-volume', formatNum(totalAvailTripsSum, 1));
+
+//   const columns = [
+//     '',
+//     'Route',
+//     'Customer (Type) & Item (Type)',
+//     'Truck (Type)',
+//     'Carriers',
+//     'Sum Trip/Week',
+//     'Available Backhaul'
+//   ];
+//   document.getElementById('table-head').innerHTML =
+//     `<tr class="text-[10px] uppercase tracking-wider border-b text-slate-500 border-slate-200 dark:text-slate-400 dark:border-slate-700 bg-slate-50/60 dark:bg-zinc-900/60 font-sans">${columns.map((col, i) => `<th class="p-3 font-bold ${i === 0 ? 'w-10 text-center' : ''}">${col}</th>`).join('')}</tr>`;
+
+//   const totalPages = Math.ceil(routeKeys.length / PAGE_SIZE);
+//   if (currentPage > totalPages) currentPage = 1;
+//   const startIndex = (currentPage - 1) * PAGE_SIZE;
+//   const paginatedKeys = routeKeys.slice(startIndex, startIndex + PAGE_SIZE);
+
+//   let html = '';
+//   paginatedKeys.forEach((key) => {
+//     const grp = groupedRoutes[key];
+//     const color = getAvailColorScale(grp.availablePct);
+//     const vendorCount = grp.vendors.length;
+
+//     const totalOffPeak = grp.vendors.reduce((sum, v) => sum + parseNum(v.avg_off_peak || v['Avg Off Peak'], 0), 0);
+//     const totalPeak = grp.vendors.reduce((sum, v) => sum + parseNum(v.avg_peak || v['Avg Peak'], 0), 0);
+
+//     const avgBoonrawd =
+//       vendorCount > 0
+//         ? Math.round(
+//             grp.vendors.reduce((sum, v) => sum + parseNum(v.pct_boonrawd || v['%รับงานต่อสำหรับงานบุญรอด'], 0), 0) /
+//               vendorCount
+//           )
+//         : 0;
+//     const avgOwn =
+//       vendorCount > 0
+//         ? Math.round(
+//             grp.vendors.reduce((sum, v) => sum + parseNum(v.pct_own || v['%รับงานต่องานของผู้รับเหมาเอง'], 0), 0) /
+//               vendorCount
+//           )
+//         : 0;
+//     const avgOutside =
+//       vendorCount > 0
+//         ? Math.round(
+//             grp.vendors.reduce(
+//               (sum, v) => sum + parseNum(v.pct_brf_outside || v['%รับงานต่อ สำหรับงานนอกของ BRF'], 0),
+//               0
+//             ) / vendorCount
+//           )
+//         : 0;
+
+//     html += `
+//       <tr id="row-${grp.id}" data-map-key="${escapeAttr(grp.mapRouteKey)}" class="text-xs border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer font-sans" onclick="window.onTableRowClick('${escapeAttr(grp.mapRouteKey)}', '${grp.id}')">
+//         <td class="p-3 text-center"><i data-lucide="chevron-right" id="icon-${grp.id}" class="w-4 h-4 text-slate-400 transition-transform duration-200 inline-block"></i></td>
+//         <td class="p-3 whitespace-nowrap">
+//           <div class="font-bold text-slate-800 dark:text-white">${escapeHtml(grp.origin)} &rarr; ${escapeHtml(grp.shipToDesc)}</div>
+//           <div class="text-[10px] text-slate-400">Zone: ${escapeHtml(grp.zone)}</div>
+//         </td>
+//         <td class="p-3 max-w-[200px]">
+//           <div class="font-bold text-slate-800 dark:text-slate-200 truncate"><span>${escapeHtml(grp.customerName)}</span> <span class="text-xs font-normal text-slate-500">(${escapeHtml(grp.customerType)})</span></div>
+//           <div class="text-[10px] text-slate-400 truncate mt-0.5">${escapeHtml(grp.productCat)}</div>
+//         </td>
+//         <td class="p-3 whitespace-nowrap"><div class="font-semibold text-blue-600 dark:text-blue-400">${escapeHtml(grp.truckType)}</div></td>
+//         <td class="p-3"><span class="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-slate-300 font-extrabold text-[10px]">${vendorCount}</span></td>
+//         <td class="p-3 whitespace-nowrap">
+//           <div class="font-Sarabun font-bold text-slate-800 dark:text-slate-200">${formatNum(grp.totalTrips)} Trip/WK</div>
+//           <div class="text-[10px] font-Sarabun text-slate-500 dark:text-slate-400 mt-0.5">
+//             Off: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(totalOffPeak)}</span> | On: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(totalPeak)}</span>
+//           </div>
+//         </td>
+//         <td class="p-3 min-w-[170px]">
+//           <div class="flex items-center justify-between text-[10px] font-Sarabun font-bold mb-1">
+//             <span class="text-slate-500">Available:</span>
+//             <span class="${color.text}">${grp.availablePct}% <span class="text-slate-400 font-normal">(~${formatNum(grp.totalAvailTrips, 1)} trips/wk)</span></span>
+//           </div>
+//           <div class="w-full bg-slate-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden flex shadow-inner mb-1">
+//             <div class="bg-blue-500 h-full transition-all" style="width: ${avgBoonrawd}%"></div>
+//             <div class="bg-emerald-500 h-full transition-all" style="width: ${avgOwn}%"></div>
+//             <div class="bg-amber-500 h-full transition-all" style="width: ${avgOutside}%"></div>
+//           </div>
+//           <div class="flex justify-between text-[9px] font-Sarabun leading-tight">
+//             <span class="text-blue-500 font-semibold">BRT ${avgBoonrawd}%</span>
+//             <span class="text-emerald-500 font-semibold">Own ${avgOwn}%</span>
+//             <span class="text-amber-500 font-semibold">Ext ${avgOutside}%</span>
+//           </div>
+//         </td>
+//       </tr>
+//       <tr id="detail-${grp.id}" class="border-b border-slate-200 dark:border-slate-800 font-sans">
+//         <td colspan="7" class="p-0">
+//           <div class="accordion-detail" id="content-${grp.id}">
+//             <div class="p-4 pl-12 border-l-4 border-orange-500 m-3 rounded-2xl bg-slate-50/80 dark:bg-zinc-950/80 shadow-inner">
+//               <h4 class="text-xs font-bold mb-2 text-slate-700 dark:text-slate-300">Carriers Details (${vendorCount})</h4>
+//               <table class="w-full text-xs text-left border-collapse">
+//                 <thead class="text-slate-400 dark:text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-200 dark:border-slate-800">
+//                   <tr>
+//                     <th class="py-2 px-3 font-bold w-1/4">Carrier Name</th>
+//                     <th class="py-2 px-2 font-bold text-center w-20">Avg Trip</th>
+//                     <th class="py-2 px-2 font-bold text-center w-20">Off Peak</th>
+//                     <th class="py-2 px-2 font-bold text-center w-20">Peak</th>
+//                     <th class="py-2 px-3 font-bold text-center w-28">Available Capacity</th>
+//                     <th class="py-2 px-3 font-bold text-center w-28">Available Trips/Wk</th>
+//                     <th class="py-2 px-3 font-bold text-center">Available Proportion</th>
+//                   </tr>
+//                 </thead>
+//                 <tbody class="divide-y divide-slate-200/60 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
+//                   ${grp.vendors
+//                     .map((v) => {
+//                       const vp = v._parsed;
+//                       const fwdAgentName = v.fwd_agent_desc || '-';
+//                       const vOutsideRoute = String(v.brf_outside_route || '').trim();
+//                       const vTrip = vp ? vp.trips : parseNum(v.avg_trip_week, 0);
+//                       const vOffPeak = parseNum(v.avg_off_peak || v['Avg Off Peak'], 0);
+//                       const vPeak = parseNum(v.avg_peak || v['Avg Peak'], 0);
+//                       const vendorAvailablePct = vp ? vp.availPct : Math.max(0, 100 - parseNum(v.pct_total, 0));
+//                       const vendorAvailTrips = vp ? vp.availTrips : vTrip * (vendorAvailablePct / 100);
+//                       const isFull = vendorAvailablePct === 0;
+//                       const bVal = parseNum(v.pct_boonrawd || v['%รับงานต่อสำหรับงานบุญรอด'], 0);
+//                       const oVal = parseNum(v.pct_own || v['%รับงานต่องานของผู้รับเหมาเอง'], 0);
+//                       const extVal = parseNum(v.pct_brf_outside || v['%รับงานต่อ สำหรับงานนอกของ BRF'], 0);
+//                       const vendorBadgeColor = isFull
+//                         ? 'bg-rose-50 text-rose-600 border border-rose-200'
+//                         : 'bg-emerald-50 text-emerald-600 border border-emerald-200';
+
+//                       return `
+//                       <tr class="hover:bg-slate-100/60 dark:hover:bg-zinc-900/60 transition-colors">
+//                         <td class="py-3 px-3 font-bold text-slate-800 dark:text-slate-200">
+//                           ${escapeHtml(fwdAgentName)}${vOutsideRoute && vOutsideRoute !== '-' ? `<span class="block text-[10px] text-slate-400 font-normal mt-0.5">เส้นทางนอก BRF: ${escapeHtml(vOutsideRoute)}</span>` : ''}
+//                         </td>
+//                         <td class="py-3 px-2 text-center font-Sarabun font-bold">${formatNum(vTrip)}</td>
+//                         <td class="py-3 px-2 text-center font-Sarabun text-slate-500">${formatNum(vOffPeak)}</td>
+//                         <td class="py-3 px-2 text-center font-Sarabun text-slate-500">${formatNum(vPeak)}</td>
+//                         <td class="py-3 px-3 text-center">
+//                           <span class="px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center whitespace-nowrap ${vendorBadgeColor}">
+//                             <span class="w-1.5 h-1.5 rounded-full shrink-0 mr-1.5 ${isFull ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}"></span>
+//                             ${Math.round(vendorAvailablePct)}%
+//                           </span>
+//                         </td>
+//                         <td class="py-3 px-3 text-center font-Sarabun font-bold text-slate-700 dark:text-slate-300">
+//                           ${formatNum(vendorAvailTrips, 1)}
+//                         </td>
+//                         <td class="py-3 px-4">
+//                           <div class="max-w-xs mx-auto space-y-1">
+//                             <div class="w-full bg-slate-200 dark:bg-zinc-800 h-2 rounded-full overflow-hidden flex shadow-inner">
+//                               <div class="bg-blue-500 h-full transition-all" style="width: ${bVal}%"></div>
+//                               <div class="bg-emerald-500 h-full transition-all" style="width: ${oVal}%"></div>
+//                               <div class="bg-amber-500 h-full transition-all" style="width: ${extVal}%"></div>
+//                             </div>
+//                             <div class="flex justify-between text-[10px] font-Sarabun text-slate-500 dark:text-slate-400 px-0.5">
+//                               <span class="text-blue-500 font-semibold">BRT ${bVal}%</span>
+//                               <span class="text-emerald-500 font-semibold">Own ${oVal}%</span>
+//                               <span class="text-amber-500 font-semibold">Ext ${extVal}%</span>
+//                             </div>
+//                           </div>
+//                         </td>
+//                       </tr>
+//                     `;
+//                     })
+//                     .join('')}
+//                 </tbody>
+//               </table>
+//             </div>
+//           </div>
+//         </td>
+//       </tr>
+//     `;
+//   });
+
+//   tbody.innerHTML = html;
+//   renderPaginationControls(totalPages, routeKeys.length);
+//   if (typeof window.lucide !== 'undefined') window.lucide.createIcons({ root: tbody });
+// }
+
+function groupRouteData(filteredData = [], trendSync = null) {
   const groupedRoutes = {};
   filteredData.forEach((row) => {
     const p = row._parsed;
     if (!p) return;
     const routeKey = p.distinctKey;
+
+    const synced = trendSync ? trendSync.getMetrics(p.rowMatchKey) : null;
+    const rowTrips = synced ? synced.trips : p.trips;
+    const rowAvailTrips = synced ? rowTrips * (p.availPct / 100) : p.availTrips;
+    const rowOffPeak = synced ? synced.offPeak : parseNum(row.avg_off_peak || row['Avg Off Peak'], 0);
+    const rowPeak = synced ? synced.peak : parseNum(row.avg_peak || row['Avg Peak'], 0);
 
     if (!groupedRoutes[routeKey]) {
       groupedRoutes[routeKey] = {
@@ -1720,6 +2182,8 @@ function groupRouteData(filteredData = []) {
         uniqueSubcons: new Set(),
         totalTrips: 0,
         totalAvailTrips: 0,
+        totalOffPeak: 0,
+        totalPeak: 0,
         sumPct: 0,
         availablePct: 0,
         vendors: []
@@ -1730,16 +2194,26 @@ function groupRouteData(filteredData = []) {
       groupedRoutes[routeKey].uniqueSubcons.add(row.fwd_agent_desc);
     }
 
-    groupedRoutes[routeKey].totalTrips += p.trips;
-    groupedRoutes[routeKey].totalAvailTrips += p.availTrips;
+    groupedRoutes[routeKey].totalTrips += rowTrips;
+    groupedRoutes[routeKey].totalAvailTrips += rowAvailTrips;
+    groupedRoutes[routeKey].totalOffPeak += rowOffPeak;
+    groupedRoutes[routeKey].totalPeak += rowPeak;
     groupedRoutes[routeKey].sumPct += p.totalPct;
-    groupedRoutes[routeKey].vendors.push(row);
+    groupedRoutes[routeKey].vendors.push({
+      ...row,
+      _syncMetrics: {
+        trips: rowTrips,
+        availTrips: rowAvailTrips,
+        offPeak: rowOffPeak,
+        peak: rowPeak
+      }
+    });
   });
 
   Object.values(groupedRoutes).forEach((grp) => {
     const count = grp.vendors.length;
     grp.availablePct = Math.max(0, Math.round(100 - (count > 0 ? grp.sumPct / count : 0)));
-    grp.vendors.sort((a, b) => b._parsed.availTrips - a._parsed.availTrips);
+    grp.vendors.sort((a, b) => b._syncMetrics.availTrips - a._syncMetrics.availTrips);
   });
 
   return groupedRoutes;
@@ -1748,7 +2222,9 @@ function groupRouteData(filteredData = []) {
 function renderTable(filteredData = []) {
   const tbody = document.getElementById('table-body');
   if (!tbody) return;
-  const groupedRoutes = groupRouteData(filteredData);
+
+  const trendSync = getActiveTrendSyncContext();
+  const groupedRoutes = groupRouteData(filteredData, trendSync);
   const routeKeys = Object.keys(groupedRoutes);
 
   const setText = (id, text) => {
@@ -1799,13 +2275,17 @@ function renderTable(filteredData = []) {
   setText('ops-total-volume', Math.round(totalTripsSum).toLocaleString());
   setText('ops-avail-volume', formatNum(totalAvailTripsSum, 1));
 
+  const tripHeaderHtml = trendSync
+    ? `Sum Trip/Week <span class="block text-[9px] font-semibold text-orange-500 normal-case">(${trendSync.startStr} ~ ${trendSync.endStr})</span>`
+    : 'Sum Trip/Week';
+
   const columns = [
     '',
     'Route',
     'Customer (Type) & Item (Type)',
     'Truck (Type)',
     'Carriers',
-    'Sum Trip/Week',
+    tripHeaderHtml,
     'Available Backhaul'
   ];
   document.getElementById('table-head').innerHTML =
@@ -1821,9 +2301,6 @@ function renderTable(filteredData = []) {
     const grp = groupedRoutes[key];
     const color = getAvailColorScale(grp.availablePct);
     const vendorCount = grp.vendors.length;
-
-    const totalOffPeak = grp.vendors.reduce((sum, v) => sum + parseNum(v.avg_off_peak || v['Avg Off Peak'], 0), 0);
-    const totalPeak = grp.vendors.reduce((sum, v) => sum + parseNum(v.avg_peak || v['Avg Peak'], 0), 0);
 
     const avgBoonrawd =
       vendorCount > 0
@@ -1865,7 +2342,7 @@ function renderTable(filteredData = []) {
         <td class="p-3 whitespace-nowrap">
           <div class="font-Sarabun font-bold text-slate-800 dark:text-slate-200">${formatNum(grp.totalTrips)} Trip/WK</div>
           <div class="text-[10px] font-Sarabun text-slate-500 dark:text-slate-400 mt-0.5">
-            Off: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(totalOffPeak)}</span> | On: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(totalPeak)}</span>
+            Off: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(grp.totalOffPeak)}</span> | On: <span class="font-bold text-slate-700 dark:text-slate-300">${formatNum(grp.totalPeak)}</span>
           </div>
         </td>
         <td class="p-3 min-w-[170px]">
@@ -1906,13 +2383,14 @@ function renderTable(filteredData = []) {
                   ${grp.vendors
                     .map((v) => {
                       const vp = v._parsed;
+                      const sm = v._syncMetrics;
                       const fwdAgentName = v.fwd_agent_desc || '-';
                       const vOutsideRoute = String(v.brf_outside_route || '').trim();
-                      const vTrip = vp ? vp.trips : parseNum(v.avg_trip_week, 0);
-                      const vOffPeak = parseNum(v.avg_off_peak || v['Avg Off Peak'], 0);
-                      const vPeak = parseNum(v.avg_peak || v['Avg Peak'], 0);
+                      const vTrip = sm.trips;
+                      const vOffPeak = sm.offPeak;
+                      const vPeak = sm.peak;
                       const vendorAvailablePct = vp ? vp.availPct : Math.max(0, 100 - parseNum(v.pct_total, 0));
-                      const vendorAvailTrips = vp ? vp.availTrips : vTrip * (vendorAvailablePct / 100);
+                      const vendorAvailTrips = sm.availTrips;
                       const isFull = vendorAvailablePct === 0;
                       const bVal = parseNum(v.pct_boonrawd || v['%รับงานต่อสำหรับงานบุญรอด'], 0);
                       const oVal = parseNum(v.pct_own || v['%รับงานต่องานของผู้รับเหมาเอง'], 0);

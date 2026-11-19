@@ -102,12 +102,14 @@ describe('Trend time helpers', () => {
       totalActualTrips: 400,
       averageActualPerPeriod: 200,
       peakActualPerPeriod: 300,
+      minimumActualPerPeriod: 100,
       periodsWithData: 2
     });
     expect(summarizeActualPeriods([])).toEqual({
       totalActualTrips: 0,
       averageActualPerPeriod: 0,
       peakActualPerPeriod: 0,
+      minimumActualPerPeriod: 0,
       periodsWithData: 0
     });
   });
